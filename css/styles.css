@@ -5,7 +5,20 @@ body::before {
   background-image: radial-gradient(rgba(255,255,255,0.012) 1px, transparent 1px);
   background-size: 28px 28px; pointer-events: none; z-index: 0;
 }
-#canvas { position: fixed; inset: 0; z-index: 1; cursor: grab; touch-action: none; }
+#canvas {
+  position: fixed; top: 0; left: 0; z-index: 1;
+  cursor: grab; touch-action: none;
+  /* iOS Safari: force the canvas onto its own GPU layer at full resolution.
+     Without these, Safari may composite the canvas into a downsampled tile
+     while keeping DOM text crisp — exactly what causes "DOM sharp, canvas
+     blurry" on iPhones. */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
+  image-rendering: -webkit-optimize-contrast;
+}
 #canvas.dragging { cursor: grabbing; }
 #header {
   position: fixed; top: 24px; left: 38px; z-index: 10;
@@ -139,6 +152,63 @@ body::before {
   z-index: 10; pointer-events: none; transition: opacity 2s;
 }
 #hint.gone { opacity: 0; }
+
+/* ── Powered-by panel hide/show ── */
+#vp-close {
+  position: absolute;
+  top: -11px;
+  right: -11px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(7,10,18,0.98);
+  border: 1px solid rgba(255,255,255,0.28);
+  color: rgba(255,255,255,0.92);
+  font-family: 'DM Mono', monospace;
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  pointer-events: auto;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+#vp-close:hover {
+  background: rgba(20,24,38,1);
+  border-color: rgba(255,255,255,0.55);
+  color: #ffffff;
+}
+#vp.hidden { display: none; }
+
+#vp-show {
+  position: fixed;
+  top: 24px;
+  right: 38px;
+  z-index: 10;
+  display: none;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.94);
+  background: linear-gradient(180deg, rgba(7,10,18,0.92), rgba(7,10,18,0.72));
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 999px;
+  padding: 9px 16px;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.32);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+#vp-show.visible { display: inline-block; }
+#vp-show:hover {
+  background: linear-gradient(180deg, rgba(20,24,38,1), rgba(15,18,30,0.9));
+  border-color: rgba(255,255,255,0.42);
+}
 
 /* ── Popup card ── */
 #popup {
@@ -279,6 +349,20 @@ body::before {
   #popup-source {
     font-size: 11px;
     letter-spacing: 1px;
+  }
+  #vp-close {
+    top: -10px;
+    right: -10px;
+    width: 30px;
+    height: 30px;
+    font-size: 19px;
+  }
+  #vp-show {
+    top: auto;
+    right: 12px;
+    bottom: 18px;
+    font-size: 12px;
+    padding: 8px 14px;
   }
 }
 

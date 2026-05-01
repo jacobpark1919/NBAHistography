@@ -25,9 +25,19 @@ const MOS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','
 //  VISUAL CONSTANTS — these never change with zoom
 // ══════════════════════════════════════════════════════════════════════════════
 
-const DOT_R    = 4.5;          // dot radius (px) — always fixed
-const DOT_STEP = 12;           // vertical spacing (px) — always fixed
-const DOT_DIAM = DOT_R * 2;    // 9px — overlap threshold
+const DOT_R    = 3;            // base dot radius (px) at desktop sizing
+const DOT_STEP = 10;           // vertical spacing (px) at desktop sizing
+const DOT_DIAM = DOT_R * 2;    // desktop overlap threshold
+
+// Phones can't stretch horizontally, so dots start tiny and grow a lot as you
+// zoom in. 0.3 on small phones (radius ~0.9px) → 1.0 on ~900px+ width.
+function viewportFactor() {
+  const dim = Math.min(W || window.innerWidth, H || window.innerHeight);
+  const t = Math.max(0, Math.min(1, (dim - 360) / (900 - 360)));
+  return 0.3 + t * 0.7;
+}
+function dotBaseR()    { return DOT_R    * viewportFactor(); }
+function dotBaseStep() { return DOT_STEP * viewportFactor(); }
 
 // ── Era-tinted placeholder color ─────────────────────────────────────────────
 const SOURCE_META = {
@@ -75,8 +85,14 @@ const realDots = REAL_EVENTS_DATA.map((e, i) => {
     date   : e.date,
     hoverT : 0,
     id     : i,
-    _sx    : null,   // screen position written each frame
+    _sx    : null,   // screen position written each frame (for hover hits)
     _sy    : null,
+    // Animated layout target — _binDays is the day-position of the dot's
+    // current bin's center; _yOff is its vertical offset from the axis.
+    // These lerp toward each frame's recomputed targets so dots slide into
+    // their new column/row instead of snapping when the binning changes.
+    _binDays : null,
+    _yOff    : null,
   };
 });
 
@@ -99,6 +115,9 @@ function updateVisibleDots() {
   );
   if (hovered && !visibleRealDots.includes(hovered)) hovered = null;
   if (fadingDot && !visibleRealDots.includes(fadingDot)) fadingDot = null;
+  // Reset animated layout positions: dots that were hidden then reappear
+  // would otherwise slide from wherever they were last drawn.
+  for (const d of realDots) { d._binDays = null; d._yOff = null; }
   hidePopup();
   dirty = true;
 }
@@ -117,18 +136,32 @@ const r01 = s => { const v = (Math.sin(s * 9301 + 49297) * 233280) % 1; return v
 //  The group then stacks vertically with organic height from actual event density.
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── Dot radius grows as you zoom into day-level detail ──────────────────────
+// ── Dot radius grows continuously as you zoom in ────────────────────────────
+// Maps current zoom (scale = px/day) onto a 0..1 log range, then adds growth
+// proportional to viewport size. Continuous from min zoom to max zoom — not
+// a stepwise threshold.
 function zoomedDotR() {
-  // base size = DOT_R; starts growing when a single day is ~12px wide
-  const growAt = 12;   // px/day threshold
-  if (scale <= growAt) return DOT_R;
-  return DOT_R + Math.min(16, (scale - growAt) * 0.55);
+  const base = dotBaseR();
+  const minS = (W || 1) * 0.52 / TOTAL_DAYS;   // matches clampViewport's floor
+  const maxS = 120;                            // matches clampViewport's cap
+  // Log term gives gentle, perceptible growth across early zoom; linear-in-
+  // scale term keeps growing at deep zoom where the log plateaus. Growth is
+  // intentionally NOT scaled by viewportFactor — that way mobile dots (which
+  // start tiny) grow as fast in absolute px as desktop dots, so each scroll
+  // step on a phone has the same visible size delta as on a 32" monitor.
+  const tLog = Math.log(Math.max(scale, minS) / minS) / Math.log(maxS / minS);
+  const tLin = Math.max(0, scale - minS) / (maxS - minS);
+  const grow = tLog * 12 + tLin * 14;
+  return base + grow;
 }
 
 function stackStep() {
   const r = zoomedDotR();
   const zoomBoost = Math.max(0, scale - 18) * 0.22;
-  return Math.max(DOT_STEP, r * 2 + 6 + zoomBoost);
+  // The dot-to-dot gap scales with viewport so phones get tighter columns:
+  // 6px on desktop, ~1.8px on small phones. Floor is also viewport-scaled.
+  const gap = 6 * viewportFactor();
+  return Math.max(dotBaseStep(), r * 2 + gap + zoomBoost);
 }
 
 function drawAxisText(text, x, y, fillStyle, strokeWidth = 4, strokeStyle = 'rgba(6,10,20,0.96)', shadowBlur = 0) {
@@ -149,8 +182,10 @@ function drawAxisText(text, x, y, fillStyle, strokeWidth = 4, strokeStyle = 'rgb
 }
 
 function binWidth() {
-  // Merge days when they'd be closer than DOT_DIAM (9px) horizontally
-  return Math.max(1, Math.ceil(DOT_DIAM / scale));
+  // Merge days closer than one rendered-dot diameter apart. Uses the
+  // zoom-aware radius (not the base) so adjacent bins never overlap as the
+  // dots grow during zoom-in.
+  return Math.max(1, Math.ceil(2 * zoomedDotR() / scale));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -163,6 +198,25 @@ let W, H;
 let scale = 1;
 let panX  = TOTAL_DAYS / 2;
 let panY  = 0;
+
+// Size the canvas backing store at devicePixelRatio so dots stay crisp on
+// HiDPI screens (Retina, XPS, phones). CSS keeps the element at logical size;
+// the context is pre-scaled so the rest of the draw code uses CSS pixels.
+let cssDPR = 1;
+function resizeCanvas() {
+  cssDPR = Math.min(3, window.devicePixelRatio || 1);
+  // First make the element fill the visible viewport at CSS sizing, then
+  // measure it. Using innerWidth alone is unreliable on iOS during the URL-
+  // bar animation; getBoundingClientRect gives the actual rendered size.
+  canvas.style.width  = window.innerWidth  + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  const rect = canvas.getBoundingClientRect();
+  W = Math.round(rect.width);
+  H = Math.round(rect.height);
+  canvas.width  = Math.round(W * cssDPR);
+  canvas.height = Math.round(H * cssDPR);
+  ctx.setTransform(cssDPR, 0, 0, cssDPR, 0, 0);
+}
 
 const axisY = ()   => H / 2 + panY;
 const toSX  = wx   => (wx - panX) * scale + W / 2;
@@ -288,23 +342,32 @@ function drawGrid() {
 function drawBins() {
   const bw   = binWidth();
   const ay   = axisY();
+  const r0   = zoomedDotR();   // base radius grows with zoom
 
-  // Clear screen-position cache
+  // Clear screen-position cache (dots not drawn this frame become unhoverable)
   for (const d of realDots) { d._sx = null; d._sy = null; }
 
-  const r0    = zoomedDotR();   // base radius grows with zoom
+  // Frame-rate-independent lerp factor. Higher rate = snappier settle.
+  // _binDays animates in WORLD-SPACE days; _yOff animates in CSS pixels. Pan
+  // is applied at draw time via toSX() so panning never animates.
+  const ANIM_RATE = 18;
+  const lerpT = 1 - Math.exp(-ANIM_RATE * lastFrameDt);
+
   const vL    = toWX(-r0 - 2);
   const vR    = toWX(W + r0 + 2);
   const firstBin = Math.floor(Math.max(0, vL) / bw);
   const lastBin  = Math.ceil(Math.min(TOTAL_DAYS, vR) / bw);
+
+  let stillAnimating = false;
 
   for (let b = firstBin; b <= lastBin; b++) {
     const d0 = b * bw;
     const d1 = Math.min(TOTAL_DAYS, (b + 1) * bw - 1);
     if (d0 > TOTAL_DAYS) break;
 
-    const sx = toSX((d0 + d1) / 2);
-    if (sx < -r0 - 2 || sx > W + r0 + 2) continue;
+    const targetBinDays = (d0 + d1) / 2;
+    const targetSx = toSX(targetBinDays);
+    if (targetSx < -r0 - 2 || targetSx > W + r0 + 2) continue;
 
     // Collect real events in this bin, innermost (imp 1) first
     const binReal = [];
@@ -318,8 +381,29 @@ function drawBins() {
       const dot  = binReal[i];
       const row  = Math.floor(i / 2);
       const sign = (i % 2 === 0) ? -1 : 1;
-      const yOff = sign * (row + 0.5) * stackStep();
-      const sy   = ay + yOff;
+      const targetYOff = sign * (row + 0.5) * stackStep();
+
+      // First-ever positioning: snap with no animation.
+      if (dot._binDays === null) {
+        dot._binDays = targetBinDays;
+        dot._yOff    = targetYOff;
+      } else {
+        const dxDays = targetBinDays - dot._binDays;
+        const dyPx   = targetYOff   - dot._yOff;
+        // Snap when the remaining delta would render as <0.5px (sub-pixel),
+        // otherwise lerp and request another frame.
+        if (Math.abs(dxDays) * scale > 0.5 || Math.abs(dyPx) > 0.5) {
+          dot._binDays += dxDays * lerpT;
+          dot._yOff    += dyPx   * lerpT;
+          stillAnimating = true;
+        } else {
+          dot._binDays = targetBinDays;
+          dot._yOff    = targetYOff;
+        }
+      }
+
+      const sx = toSX(dot._binDays);
+      const sy = ay + dot._yOff;
 
       if (sy < -r0 - 2 || sy > H + r0 + 2) continue;
 
@@ -327,18 +411,17 @@ function drawBins() {
       dot._sx = sx;
       dot._sy = sy;
 
-      const lod   = impAlpha(dot.imp);
+      const lod = impAlpha(dot.imp);
       if (lod < 0.02) continue;
 
-      const r     = r0 + dot.hoverT * 27;
-      const alpha = lod * (0.85 + 0.15 * dot.hoverT);
+      const r = r0 + dot.hoverT * 27;
 
       ctx.save();
       if (dot.hoverT > 0.02) {
         ctx.shadowColor = dot.color;
         ctx.shadowBlur  = 5 + 25 * dot.hoverT;
       }
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = 1;
       ctx.fillStyle   = dot.color;
       ctx.beginPath();
       ctx.arc(sx, sy, r, 0, Math.PI * 2);
@@ -346,6 +429,8 @@ function drawBins() {
       ctx.restore();
     }
   }
+
+  if (stillAnimating) dirty = true;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -519,8 +604,10 @@ function findNearest(mx, my) {
 }
 
 let lastTime = 0;
+let lastFrameDt = 1 / 60;   // read by drawBins() for layout-lerp speed
 function tick(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05); lastTime = now;
+  lastFrameDt = dt;
   let nd = dirty;
 
   const anim = (d, tgt) => {
@@ -532,7 +619,12 @@ function tick(now) {
   if (hovered)   anim(hovered, 1);
   if (fadingDot) { anim(fadingDot, 0); if (fadingDot.hoverT <= 0.001) { fadingDot.hoverT = 0; fadingDot = null; } }
 
-  if (nd) { draw(); dirty = false; }
+  if (nd) {
+    // Clear before draw — drawBins can re-arm `dirty` if dots are still
+    // animating toward their target column/row, requesting another frame.
+    dirty = false;
+    draw();
+  }
   requestAnimationFrame(tick);
 }
 
@@ -556,7 +648,19 @@ const MOBILE_BREAKPOINT = 760;
 const headerEl = document.getElementById('header');
 const headerSubEl = headerEl.querySelector('.h-sub');
 const vpEl = document.getElementById('vp');
+const vpCloseBtn = document.getElementById('vp-close');
+const vpShowBtn = document.getElementById('vp-show');
 const hintEl = document.getElementById('hint');
+
+vpCloseBtn.addEventListener('click', () => {
+  vpEl.classList.add('hidden');
+  vpShowBtn.classList.add('visible');
+});
+vpShowBtn.addEventListener('click', () => {
+  vpEl.classList.remove('hidden');
+  vpShowBtn.classList.remove('visible');
+  applyResponsiveChrome();
+});
 
 const DESKTOP_COPY = {
   headerSub: 'Scroll to zoom · Drag to pan · 1894-Present',
@@ -632,7 +736,7 @@ function sourceToUrl(source) {
 
 function showPopup(d) {
   const sx = d._sx, sy = d._sy;
-  const r  = DOT_R + d.hoverT * 27;
+  const r  = dotBaseR() + d.hoverT * 27;
   const col = d.color;
 
   const dateFmt = parseISODateUTC(d.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
@@ -885,12 +989,25 @@ function onFilterToggle(changedEl) {
 filterNBAEl.addEventListener('change', () => onFilterToggle(filterNBAEl));
 filterHoopsEl.addEventListener('change', () => onFilterToggle(filterHoopsEl));
 
-window.addEventListener('resize', () => {
-  W = canvas.width  = window.innerWidth;
-  H = canvas.height = window.innerHeight;
+function handleViewportChange() {
+  resizeCanvas();
   clampViewport();
   applyResponsiveChrome();
   dirty = true;
+}
+
+window.addEventListener('resize', handleViewportChange);
+// iOS Safari fires orientationchange but sometimes skips a clean resize
+// when the URL bar collapses, so wire those events too.
+window.addEventListener('orientationchange', handleViewportChange);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', handleViewportChange);
+}
+// Safari can restore the page from back-forward cache (bfcache) without
+// re-running init, leaving us with a stale backing buffer / DPR. Force a
+// full re-resize on bfcache restore.
+window.addEventListener('pageshow', e => {
+  if (e.persisted) handleViewportChange();
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -898,8 +1015,7 @@ window.addEventListener('resize', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 document.fonts.ready.then(() => {
-  W = canvas.width  = window.innerWidth;
-  H = canvas.height = window.innerHeight;
+  resizeCanvas();
   initViewport();
   clampViewport();
   updateSourceCounts();

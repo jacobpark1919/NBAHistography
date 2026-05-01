@@ -3,9 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>NBA Histography</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@300;400;600;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/styles.css?v=20260501c">
 </head>
 <body>
 <div id="header">
@@ -16,6 +19,7 @@
   <div class="h-sub">Scroll to zoom · Drag to pan · 1894-Present</div>
 </div>
 <div id="vp">
+  <button id="vp-close" type="button" aria-label="Hide info panel" title="Hide">×</button>
   <div class="vp-main">About · Powered by</div>
   <div class="vp-meta vp-links">
     <a class="vp-link vp-link-nba" href="https://www.nba.com/history" target="_blank" rel="noopener noreferrer">NBA.com/history</a>
@@ -50,6 +54,7 @@
     </label>
   </div>
 </div>
+<button id="vp-show" type="button" aria-label="Show info panel">About</button>
 <div id="hint">Scroll to dive in · Drag to explore</div>
 <canvas id="canvas"></canvas>
 
@@ -63,7 +68,7 @@
   </div>
 </div>
 
-<script src="js/data.js"></script>
-<script src="js/app.js"></script>
+<script src="js/data.js?v=20260501c"></script>
+<script src="js/app.js?v=20260501c"></script>
 </body>
 </html>

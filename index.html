@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NBA Histography</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@300;400;600;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="header">
+  <div class="h-row">
+    <span class="h-title">NBA Histography</span>
+    <span class="h-pip"></span>
+  </div>
+  <div class="h-sub">Scroll to zoom · Drag to pan · 1894-Present</div>
+</div>
+<div id="vp">
+  <div class="vp-main">About · Powered by</div>
+  <div class="vp-meta vp-links">
+    <a class="vp-link vp-link-nba" href="https://www.nba.com/history" target="_blank" rel="noopener noreferrer">NBA.com/history</a>
+    <span>and</span>
+    <a class="vp-link vp-link-hoops" href="https://hoopsrewind.app" target="_blank" rel="noopener noreferrer">Hoopsrewind.app</a>
+  </div>
+  <div class="vp-meta">A visual timeline of pro basketball history</div>
+  <div class="vp-counts">
+    <div class="vp-count-row">
+      <span class="vp-count-label">NBA.com/history</span>
+      <span class="vp-count-value nba"><span id="nba-count">0</span> events</span>
+    </div>
+    <div class="vp-count-row">
+      <span class="vp-count-label">Hoopsrewind.app</span>
+      <span class="vp-count-value hoops"><span id="hoops-count">0</span> events</span>
+    </div>
+    <div class="vp-count-row">
+      <span class="vp-count-label">Combined</span>
+      <span class="vp-count-value combined"><span id="event-count">0</span> events and counting</span>
+    </div>
+  </div>
+  <div class="vp-filters">
+    <label class="vp-filter vp-filter-nba">
+      <input type="checkbox" id="filter-nba" checked>
+      <span class="vp-filter-dot nba"></span>
+      <span>NBA.com/history</span>
+    </label>
+    <label class="vp-filter vp-filter-hoops">
+      <input type="checkbox" id="filter-hoops" checked>
+      <span class="vp-filter-dot hoops"></span>
+      <span>Hoopsrewind.app</span>
+    </label>
+  </div>
+</div>
+<div id="hint">Scroll to dive in · Drag to explore</div>
+<canvas id="canvas"></canvas>
+
+<!-- Hover popup card -->
+<div id="popup">
+  <div id="popup-stem"></div>
+  <div id="popup-inner">
+    <div id="popup-date"></div>
+    <div id="popup-desc"></div>
+    <div id="popup-source">Source: <a id="popup-source-link" href="#" target="_blank" rel="noopener noreferrer"></a></div>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

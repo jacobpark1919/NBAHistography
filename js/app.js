@@ -1,0 +1,910 @@
+// ══════════════════════════════════════════════════════════════════════════════
+//  DATE UTILITIES
+// ══════════════════════════════════════════════════════════════════════════════
+
+const parseISODateUTC = s => {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+};
+
+const FIRST_EVENT_DATE = parseISODateUTC('1890-01-01');
+const NBA_EPOCH_MS = FIRST_EVENT_DATE.getTime();
+const TODAY = new Date();
+const TODAY_UTC = new Date(Date.UTC(TODAY.getUTCFullYear(), TODAY.getUTCMonth(), TODAY.getUTCDate()));
+const TOTAL_DAYS = Math.floor((TODAY_UTC.getTime() - NBA_EPOCH_MS) / 86400000);
+const START_YR = FIRST_EVENT_DATE.getUTCFullYear();
+const END_YR = TODAY_UTC.getUTCFullYear();
+
+const dayOf = s => Math.max(0, Math.floor((parseISODateUTC(s).getTime() - NBA_EPOCH_MS) / 86400000));
+const dayToDate = d => new Date(NBA_EPOCH_MS + d * 86400000);
+const fy = yr => Math.max(0, Math.floor((Date.UTC(yr, 0, 1) - NBA_EPOCH_MS) / 86400000));
+const fm = (yr, mo) => Math.max(0, Math.floor((Date.UTC(yr, mo, 1) - NBA_EPOCH_MS) / 86400000));
+const MOS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  VISUAL CONSTANTS — these never change with zoom
+// ══════════════════════════════════════════════════════════════════════════════
+
+const DOT_R    = 4.5;          // dot radius (px) — always fixed
+const DOT_STEP = 12;           // vertical spacing (px) — always fixed
+const DOT_DIAM = DOT_R * 2;    // 9px — overlap threshold
+
+// ── Era-tinted placeholder color ─────────────────────────────────────────────
+const SOURCE_META = {
+  'nba.com/history': {
+    color: '#ff9f1c',
+    label: 'NBA.com/history',
+    url: 'https://www.nba.com/history'
+  },
+  'hoopsrewind.app': {
+    color: '#ffd84d',
+    label: 'Hoopsrewind.app',
+    url: 'https://hoopsrewind.app'
+  }
+};
+
+const DOT_COLOR = SOURCE_META['nba.com/history'].color;
+const COLORS = {
+  championship:DOT_COLOR, record:DOT_COLOR, draft:DOT_COLOR,
+  rule:DOT_COLOR, tragedy:DOT_COLOR, expansion:DOT_COLOR, milestone:DOT_COLOR,
+};
+
+function eraRGB(t) {                        // t = 0..1 across timeline
+  if (t < 0.28) return [22,  48, 105];      // deep navy   — foundational era
+  if (t < 0.52) return [28,  38, 115];      // indigo-blue — Bird/Magic/Jordan
+  if (t < 0.76) return [42,  32, 108];      // purple-blue — Shaq/Kobe/LeBron
+  return              [18,  62, 125];        // vivid blue  — modern era
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  REAL EVENT DATA
+//  (REAL_EVENTS_DATA is loaded from js/data.js before this file)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Build real dot objects ────────────────────────────────────────────────────
+const realDots = REAL_EVENTS_DATA.map((e, i) => {
+  const sourceMeta = SOURCE_META[e.source] || {};
+  return {
+    worldX : dayOf(e.date),
+    imp    : e.imp,
+    cat    : e.cat,
+    color  : sourceMeta.color || COLORS[e.cat] || '#c9082a',
+    title  : e.title,
+    desc   : e.desc,
+    source : e.source,
+    date   : e.date,
+    hoverT : 0,
+    id     : i,
+    _sx    : null,   // screen position written each frame
+    _sy    : null,
+  };
+});
+
+let visibleRealDots = realDots.slice();
+
+function updateSourceCounts() {
+  const nbaCount = realDots.filter(d => d.source === 'nba.com/history').length;
+  const hoopsCount = realDots.filter(d => d.source === 'hoopsrewind.app').length;
+  document.getElementById('nba-count').textContent = nbaCount.toLocaleString('en-US');
+  document.getElementById('hoops-count').textContent = hoopsCount.toLocaleString('en-US');
+  document.getElementById('event-count').textContent = (nbaCount + hoopsCount).toLocaleString('en-US');
+}
+
+function updateVisibleDots() {
+  const showNBA = document.getElementById('filter-nba').checked;
+  const showHoops = document.getElementById('filter-hoops').checked;
+  visibleRealDots = realDots.filter(d =>
+    (showNBA && d.source === 'nba.com/history') ||
+    (showHoops && d.source === 'hoopsrewind.app')
+  );
+  if (hovered && !visibleRealDots.includes(hovered)) hovered = null;
+  if (fadingDot && !visibleRealDots.includes(fadingDot)) fadingDot = null;
+  hidePopup();
+  dirty = true;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PLACEHOLDER EVENT GENERATION & DENSITY (PREFIX SUMS)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const r01 = s => { const v = (Math.sin(s * 9301 + 49297) * 233280) % 1; return v < 0 ? v + 1 : v; };
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DYNAMIC BINNING
+//
+//  bin_width = the day range that collapses into one visual column.
+//  When scale (px/day) is small, adjacent dots would overlap, so we group them.
+//  The group then stacks vertically with organic height from actual event density.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Dot radius grows as you zoom into day-level detail ──────────────────────
+function zoomedDotR() {
+  // base size = DOT_R; starts growing when a single day is ~12px wide
+  const growAt = 12;   // px/day threshold
+  if (scale <= growAt) return DOT_R;
+  return DOT_R + Math.min(16, (scale - growAt) * 0.55);
+}
+
+function stackStep() {
+  const r = zoomedDotR();
+  const zoomBoost = Math.max(0, scale - 18) * 0.22;
+  return Math.max(DOT_STEP, r * 2 + 6 + zoomBoost);
+}
+
+function drawAxisText(text, x, y, fillStyle, strokeWidth = 4, strokeStyle = 'rgba(6,10,20,0.96)', shadowBlur = 0) {
+  const label = String(text);
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = strokeWidth;
+  if (shadowBlur > 0) {
+    ctx.shadowColor = 'rgba(0,0,0,0.30)';
+    ctx.shadowBlur = shadowBlur;
+  }
+  ctx.strokeText(label, x, y);
+  ctx.fillStyle = fillStyle;
+  ctx.fillText(label, x, y);
+  ctx.restore();
+}
+
+function binWidth() {
+  // Merge days when they'd be closer than DOT_DIAM (9px) horizontally
+  return Math.max(1, Math.ceil(DOT_DIAM / scale));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  VIEWPORT
+// ══════════════════════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+let W, H;
+let scale = 1;
+let panX  = TOTAL_DAYS / 2;
+let panY  = 0;
+
+const axisY = ()   => H / 2 + panY;
+const toSX  = wx   => (wx - panX) * scale + W / 2;
+const toSY  = yOff => axisY() + yOff;
+const toWX  = sx   => (sx - W / 2) / scale + panX;
+
+function initViewport() {
+  scale = W * 0.90 / TOTAL_DAYS;
+  panX  = TOTAL_DAYS / 2;
+  panY  = 0;
+}
+
+function clampViewport() {
+  const minS = W * 0.52 / TOTAL_DAYS;
+  const maxS = 120;
+  scale = Math.max(minS, Math.min(maxS, scale));
+  const hw = W / (2 * scale);
+  panX = Math.max(-hw * 0.3, Math.min(TOTAL_DAYS + hw * 0.3, panX));
+  panY = Math.max(-700, Math.min(700, panY));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  LOD — importance alpha
+// ══════════════════════════════════════════════════════════════════════════════
+
+const IMP_FADE = { 1:[0, 0.02], 2:[0.10, 0.35], 3:[0.70, 1.80] };
+
+function impAlpha(imp) { return 1; }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DRAW
+// ══════════════════════════════════════════════════════════════════════════════
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawVignette();
+  drawGrid();
+  drawBins();         // ← the core: dynamic binning renders everything
+  drawAxisLabels();
+}
+
+function drawVignette() {
+  const g = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H) * 0.65);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(3,5,18,0.84)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+
+function drawGrid() {
+  const yearPx  = scale * 365;
+  const monthPx = scale * 30;
+  const dayPx   = scale;
+  const vL = toWX(-4), vR = toWX(W + 4);
+  const sd = dayToDate(Math.max(0, Math.floor(vL)));
+  const ed = dayToDate(Math.min(TOTAL_DAYS, Math.ceil(vR)));
+  const sY = sd.getUTCFullYear(), eY = ed.getUTCFullYear();
+
+  ctx.save(); ctx.lineWidth = 1;
+
+  // Decade lines — always present, clearly bright
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  for (let yr = Math.ceil(sY / 10) * 10; yr <= eY; yr += 10) {
+    const sx = toSX(fy(yr));
+    if (sx < -1 || sx > W + 1) continue;
+    ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
+  }
+
+  // Year lines
+  const yrA = Math.min(0.10, Math.max(0, (yearPx - 28) / 140) * 0.10);
+  if (yrA > 0.002) {
+    ctx.strokeStyle = `rgba(255,255,255,${yrA})`;
+    for (let yr = sY; yr <= eY; yr++) {
+      if (yr % 10 === 0) continue;
+      const sx = toSX(fy(yr));
+      if (sx < -1 || sx > W + 1) continue;
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
+    }
+  }
+
+  // Month lines
+  const moA = Math.min(0.07, Math.max(0, (monthPx - 12) / 70) * 0.07);
+  if (moA > 0.002) {
+    ctx.strokeStyle = `rgba(255,255,255,${moA})`;
+    let yr = sY, mo = sd.getUTCMonth();
+    for (let i = 0; i < 500; i++) {
+      const d = fm(yr, mo);
+      if (d > vR) break;
+      const sx = toSX(d);
+      if (sx >= -1 && sx <= W + 1) { ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke(); }
+      mo++; if (mo > 11) { mo = 0; yr++; }
+    }
+  }
+
+  // Day lines
+  const dayA = Math.min(0.06, Math.max(0, (dayPx - 8) / 50) * 0.06);
+  if (dayA > 0.002) {
+    ctx.strokeStyle = `rgba(255,255,255,${dayA})`;
+    for (let d = Math.max(0, Math.floor(vL)); d <= Math.min(TOTAL_DAYS, Math.ceil(vR)); d++) {
+      const sx = toSX(d);
+      if (sx < -1 || sx > W + 1) continue;
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
+    }
+  }
+
+  // Axis line
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  const ay = axisY();
+  ctx.beginPath(); ctx.moveTo(0, ay); ctx.lineTo(W, ay); ctx.stroke();
+
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DRAW BINS — the heart of the system
+//
+//  For each visible bin:
+//    1. Sum real events + placeholder events in the bin's day range
+//    2. Real events occupy the innermost (lowest) slots — most visible
+//    3. Placeholder events fill outer slots, compressed via power curve
+//    4. Columns grow taller in denser eras — naturally, from actual data
+// ══════════════════════════════════════════════════════════════════════════════
+
+function drawBins() {
+  const bw   = binWidth();
+  const ay   = axisY();
+
+  // Clear screen-position cache
+  for (const d of realDots) { d._sx = null; d._sy = null; }
+
+  const r0    = zoomedDotR();   // base radius grows with zoom
+  const vL    = toWX(-r0 - 2);
+  const vR    = toWX(W + r0 + 2);
+  const firstBin = Math.floor(Math.max(0, vL) / bw);
+  const lastBin  = Math.ceil(Math.min(TOTAL_DAYS, vR) / bw);
+
+  for (let b = firstBin; b <= lastBin; b++) {
+    const d0 = b * bw;
+    const d1 = Math.min(TOTAL_DAYS, (b + 1) * bw - 1);
+    if (d0 > TOTAL_DAYS) break;
+
+    const sx = toSX((d0 + d1) / 2);
+    if (sx < -r0 - 2 || sx > W + r0 + 2) continue;
+
+    // Collect real events in this bin, innermost (imp 1) first
+    const binReal = [];
+    for (const dot of visibleRealDots) {
+      if (dot.worldX >= d0 && dot.worldX <= d1) binReal.push(dot);
+    }
+    binReal.sort((a, b_) => a.imp - b_.imp);
+
+    // Draw each real event
+    for (let i = 0; i < binReal.length; i++) {
+      const dot  = binReal[i];
+      const row  = Math.floor(i / 2);
+      const sign = (i % 2 === 0) ? -1 : 1;
+      const yOff = sign * (row + 0.5) * stackStep();
+      const sy   = ay + yOff;
+
+      if (sy < -r0 - 2 || sy > H + r0 + 2) continue;
+
+      // Record for hover detection
+      dot._sx = sx;
+      dot._sy = sy;
+
+      const lod   = impAlpha(dot.imp);
+      if (lod < 0.02) continue;
+
+      const r     = r0 + dot.hoverT * 27;
+      const alpha = lod * (0.85 + 0.15 * dot.hoverT);
+
+      ctx.save();
+      if (dot.hoverT > 0.02) {
+        ctx.shadowColor = dot.color;
+        ctx.shadowBlur  = 5 + 25 * dot.hoverT;
+      }
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = dot.color;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HOVER LABEL
+// ══════════════════════════════════════════════════════════════════════════════
+
+function drawHoverLabel(d) {
+  // no-op — popup is handled via HTML overlay
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  AXIS LABELS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function drawAxisLabels() {
+  const ay      = axisY();
+  const yearPx  = scale * 365;
+  const monthPx = scale * 30;
+  const dayPx   = scale;
+  const vL = toWX(-10), vR = toWX(W + 10);
+  const clampedL = Math.max(0, Math.floor(vL));
+  const clampedR = Math.min(TOTAL_DAYS, Math.ceil(vR));
+  const sd = dayToDate(clampedL);
+  const ed = dayToDate(clampedR);
+  const sY = sd.getUTCFullYear(), eY = ed.getUTCFullYear();
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+
+  // Fixed bottom band for years so they always remain visible.
+  const decSz = Math.max(12, Math.min(34, yearPx * 0.055));
+  const decA  = Math.min(0.96, 0.60 + yearPx * 0.0012);
+  const yrFade = Math.min(1, Math.max(0, (yearPx - 28) / 48));
+  const yrSz = Math.max(10, Math.min(22, yearPx * 0.044));
+  const bottomBandH = Math.max(70, decSz + (yrFade > 0.02 ? yrSz + 20 : 0) + 24);
+  const bottomBandTop = H - bottomBandH;
+
+  const bottomFade = ctx.createLinearGradient(0, bottomBandTop, 0, H);
+  bottomFade.addColorStop(0, 'rgba(6,10,20,0.00)');
+  bottomFade.addColorStop(0.22, 'rgba(6,10,20,0.34)');
+  bottomFade.addColorStop(1, 'rgba(6,10,20,0.94)');
+  ctx.fillStyle = bottomFade;
+  ctx.fillRect(0, bottomBandTop, W, bottomBandH);
+
+  const decadeY = H - 16;
+  const yearY   = decadeY - decSz - 10;
+
+  // Decade labels anchored to the bottom of the screen.
+  ctx.font = `${decSz}px "DM Mono", monospace`;
+  for (let yr = Math.ceil(sY / 10) * 10; yr <= eY; yr += 10) {
+    const d0 = fy(yr), d1 = fy(yr + 1) - 1;
+    const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
+    if (cx < 38 || cx > W - 38) continue;
+    const tx = toSX(d0);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath(); ctx.moveTo(tx, bottomBandTop + 8); ctx.lineTo(tx, bottomBandTop + 24); ctx.stroke();
+    ctx.restore();
+    drawAxisText(yr, cx, decadeY, `rgba(255,255,255,${decA})`, 6, 'rgba(6,10,20,0.98)', 8);
+  }
+
+  // Individual year labels on a separate row above the decades.
+  if (yrFade > 0.02) {
+    ctx.font = `${yrSz}px "DM Mono", monospace`;
+    for (let yr = sY; yr <= eY; yr++) {
+      if (yr % 10 === 0) continue;
+      const d0 = fy(yr), d1 = fy(yr + 1) - 1;
+      const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
+      if (cx < 28 || cx > W - 28) continue;
+      drawAxisText(yr, cx, yearY, `rgba(255,255,255,${0.78 * yrFade})`, 4.5, 'rgba(6,10,20,0.98)', 5);
+    }
+  }
+
+  // Months and days stay on separate rows so they never overlap.
+  const moFade = Math.min(1, Math.max(0, (monthPx - 24) / 42));
+  const dayFade = Math.min(1, Math.max(0, (dayPx - 20) / 26));
+  const moSz = Math.max(9, Math.min(16, monthPx * 0.30));
+  const daySz = Math.max(10, Math.min(18, dayPx * 0.17));
+  const safeBottom = bottomBandTop - 10;
+
+  let placeBelowAxis = ay + moSz + (dayFade > 0.02 ? daySz + 30 : 16) < safeBottom;
+  let monthY = null;
+  let dayY = null;
+
+  if (moFade > 0.02) {
+    if (placeBelowAxis) {
+      monthY = Math.min(ay + moSz + 14, safeBottom - (dayFade > 0.02 ? daySz + 16 : 0));
+    } else {
+      if (dayFade > 0.02) {
+        dayY = Math.max(26, ay - 12);
+        monthY = Math.max(16, dayY - daySz - 14);
+      } else {
+        monthY = Math.max(16, ay - 12);
+      }
+    }
+  }
+
+  if (dayFade > 0.02) {
+    if (placeBelowAxis) {
+      if (monthY === null) monthY = Math.min(ay + moSz + 14, safeBottom - daySz - 16);
+      dayY = monthY + daySz + 14;
+    } else {
+      if (dayY === null) dayY = Math.max(26, ay - 12);
+      if (monthY === null) monthY = Math.max(16, dayY - daySz - 14);
+    }
+  }
+
+  // Month labels
+  if (moFade > 0.02 && monthY !== null) {
+    ctx.font = `${moSz}px "DM Mono", monospace`;
+    let yr = sY, mo = sd.getUTCMonth();
+    for (let i = 0; i < 500; i++) {
+      const d0 = fm(yr, mo), d1 = fm(yr, mo + 1) - 1;
+      if (d0 > vR) break;
+      const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
+      if (cx > 28 && cx < W - 28) {
+        drawAxisText(MOS[mo], cx, monthY, `rgba(255,255,255,${0.60 * moFade})`, 3.5, 'rgba(6,10,20,0.96)', 3);
+      }
+      mo++; if (mo > 11) { mo = 0; yr++; }
+    }
+  }
+
+  // Day labels
+  if (dayFade > 0.02 && dayY !== null) {
+    ctx.font = `${daySz}px "DM Mono", monospace`;
+    const tickAlpha = 0.12 + dayFade * 0.24;
+    for (let d = Math.max(0, Math.floor(vL)); d <= Math.min(TOTAL_DAYS, Math.ceil(vR)); d++) {
+      const dt  = dayToDate(d);
+      const dom = dt.getUTCDate();
+      const sx  = toSX(d + 0.5);
+      if (sx <= 18 || sx >= W - 18) continue;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,255,255,${tickAlpha})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (placeBelowAxis) {
+        ctx.moveTo(sx, ay + 1); ctx.lineTo(sx, ay + 8);
+      } else {
+        ctx.moveTo(sx, ay - 1); ctx.lineTo(sx, ay - 8);
+      }
+      ctx.stroke();
+      ctx.restore();
+      drawAxisText(dom, sx, dayY, `rgba(255,255,255,${0.84 * dayFade})`, 4, 'rgba(6,10,20,0.98)', 3);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HOVER DETECTION & ANIMATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+let hovered   = null;
+let fadingDot = null;
+let dirty     = true;
+
+function findNearest(mx, my) {
+  const HIT2 = 22 * 22;
+  let best = null, bd = HIT2;
+  for (const d of visibleRealDots) {
+    if (d._sx === null) continue;         // not rendered this frame
+    if (impAlpha(d.imp) < 0.06) continue; // below LOD threshold — not hoverable
+    const dx = d._sx - mx, dy = d._sy - my;
+    const dd = dx * dx + dy * dy;
+    if (dd < bd) { bd = dd; best = d; }
+  }
+  return best;
+}
+
+let lastTime = 0;
+function tick(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05); lastTime = now;
+  let nd = dirty;
+
+  const anim = (d, tgt) => {
+    const p = d.hoverT;
+    d.hoverT = Math.max(0, Math.min(1, d.hoverT + (tgt - d.hoverT) * 11 * dt));
+    if (Math.abs(d.hoverT - p) > 0.0005) nd = true;
+  };
+
+  if (hovered)   anim(hovered, 1);
+  if (fadingDot) { anim(fadingDot, 0); if (fadingDot.hoverT <= 0.001) { fadingDot.hoverT = 0; fadingDot = null; } }
+
+  if (nd) { draw(); dirty = false; }
+  requestAnimationFrame(tick);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUT
+// ══════════════════════════════════════════════════════════════════════════════
+
+let isDragging = false, dragSX, dragSY, dragPX, dragPY;
+
+const popup     = document.getElementById('popup');
+const popupDate = document.getElementById('popup-date');
+const popupDesc = document.getElementById('popup-desc');
+const popupSource = document.getElementById('popup-source');
+const popupSourceLink = document.getElementById('popup-source-link');
+const popupStem = document.getElementById('popup-stem');
+
+let popupTimer = null;
+
+
+const MOBILE_BREAKPOINT = 760;
+const headerEl = document.getElementById('header');
+const headerSubEl = headerEl.querySelector('.h-sub');
+const vpEl = document.getElementById('vp');
+const hintEl = document.getElementById('hint');
+
+const DESKTOP_COPY = {
+  headerSub: 'Scroll to zoom · Drag to pan · 1894-Present',
+  hint: 'Scroll to dive in · Drag to explore'
+};
+
+const MOBILE_COPY = {
+  headerSub: 'Pinch to zoom · Drag to pan',
+  hint: 'Pinch to zoom · Drag to explore · Tap a dot'
+};
+
+let suppressMouseUntil = 0;
+let touchMode = null;
+let touchMoved = false;
+let touchStartX = 0;
+let touchStartY = 0;
+let touchStartTime = 0;
+let pinchStartDist = 0;
+let pinchStartScale = 1;
+let pinchAnchorWX = 0;
+let pinchStartMidX = 0;
+let pinchStartMidY = 0;
+let pinchStartPanY = 0;
+
+function isMobileLayout() {
+  return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
+}
+
+function applyResponsiveChrome() {
+  const mobile = isMobileLayout();
+  const copy = mobile ? MOBILE_COPY : DESKTOP_COPY;
+  headerSubEl.textContent = copy.headerSub;
+  hintEl.textContent = copy.hint;
+
+  if (mobile) {
+    vpEl.style.left = '12px';
+    vpEl.style.right = '12px';
+    vpEl.style.top = `${Math.round(headerEl.offsetTop + headerEl.offsetHeight + 10)}px`;
+  } else {
+    vpEl.style.left = 'auto';
+    vpEl.style.right = '38px';
+    vpEl.style.top = '24px';
+  }
+}
+
+function setActiveDot(dot, showNow = false) {
+  if (hovered && hovered !== dot) {
+    if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0;
+    fadingDot = hovered;
+  }
+  hovered = dot;
+  dirty = true;
+  if (dot && showNow) showPopup(dot);
+  if (!dot) hidePopup();
+}
+
+function touchDistance(t0, t1) {
+  return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+}
+
+function touchMidpoint(t0, t1) {
+  return {
+    x: (t0.clientX + t1.clientX) / 2,
+    y: (t0.clientY + t1.clientY) / 2,
+  };
+}
+
+function sourceToUrl(source) {
+  if (!source) return '#';
+  if (SOURCE_META[source]?.url) return SOURCE_META[source].url;
+  return /^https?:\/\//i.test(source) ? source : `https://${source}`;
+}
+
+function showPopup(d) {
+  const sx = d._sx, sy = d._sy;
+  const r  = DOT_R + d.hoverT * 27;
+  const col = d.color;
+
+  const dateFmt = parseISODateUTC(d.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  popupDate.textContent  = dateFmt;
+  popupDate.style.color  = col;
+  popupDesc.textContent  = d.desc;
+  popupSource.style.display = d.source ? 'block' : 'none';
+  popupSourceLink.textContent = d.source || '';
+  popupSourceLink.href = sourceToUrl(d.source);
+
+  // Position: prefer above, fall back below
+  const PW = Math.min(360, W - 16), PH = popup.offsetHeight || 140;
+  const MARGIN = 14;
+
+  let cardX = sx - PW / 2;
+  let cardY = sy - r - MARGIN - PH;
+  let stemTop = false; // stem goes down from card bottom to dot
+
+  if (cardY < 8) {
+    // Not enough room above — place below
+    cardY = sy + r + MARGIN;
+    stemTop = true; // stem goes up from card top to dot
+  }
+
+  // Clamp horizontally
+  cardX = Math.max(8, Math.min(W - PW - 8, cardX));
+
+  popup.style.left   = cardX + 'px';
+  popup.style.top    = cardY + 'px';
+  popup.style.width  = PW + 'px';
+
+  // Connector stem
+  const stemX  = sx - cardX;   // x within popup space
+  const stemLen = MARGIN + r;
+  popupStem.style.left   = Math.max(4, Math.min(PW - 4, stemX)) + 'px';
+  popupStem.style.height = stemLen + 'px';
+
+  if (stemTop) {
+    popupStem.style.top    = (-stemLen) + 'px';
+    popupStem.style.bottom = 'auto';
+  } else {
+    popupStem.style.bottom = (-stemLen) + 'px';
+    popupStem.style.top    = 'auto';
+  }
+
+  popup.classList.add('visible');
+}
+
+function hidePopup() {
+  clearTimeout(popupTimer);
+  popup.classList.remove('visible');
+}
+
+function updateHover(mx, my) {
+  if (isDragging) return;
+  const found = findNearest(mx, my);
+  if (found !== hovered) {
+    if (hovered) { if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0; fadingDot = hovered; }
+    hovered = found; dirty = true;
+    canvas.style.cursor = found ? 'pointer' : 'grab';
+    if (found) {
+      clearTimeout(popupTimer);
+      popupTimer = setTimeout(() => { if (hovered) showPopup(hovered); }, 350);
+    }
+    else hidePopup();
+  } else if (found && found._sx !== null) {
+    showPopup(found); // reposition as zoom changes
+  }
+}
+
+
+canvas.addEventListener('touchstart', e => {
+  suppressMouseUntil = Date.now() + 800;
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchMode = 'pan';
+    touchMoved = false;
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    touchStartTime = Date.now();
+    dragSX = t.clientX;
+    dragSY = t.clientY;
+    dragPX = panX;
+    dragPY = panY;
+    isDragging = true;
+    hidePopup();
+  } else if (e.touches.length >= 2) {
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const mid = touchMidpoint(t0, t1);
+    touchMode = 'pinch';
+    touchMoved = true;
+    isDragging = false;
+    pinchStartDist = Math.max(1, touchDistance(t0, t1));
+    pinchStartScale = scale;
+    pinchStartMidX = mid.x;
+    pinchStartMidY = mid.y;
+    pinchAnchorWX = toWX(mid.x);
+    pinchStartPanY = panY;
+    if (hovered) {
+      if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0;
+      fadingDot = hovered;
+      hovered = null;
+    }
+    dirty = true;
+    hidePopup();
+  }
+  hintEl.classList.add('gone');
+}, { passive: true });
+
+canvas.addEventListener('touchmove', e => {
+  suppressMouseUntil = Date.now() + 800;
+  if (e.touches.length === 1 && touchMode === 'pan') {
+    const t = e.touches[0];
+    const dx = t.clientX - touchStartX;
+    const dy = t.clientY - touchStartY;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) touchMoved = true;
+    panX = dragPX - (t.clientX - dragSX) / scale;
+    panY = dragPY + (t.clientY - dragSY);
+    clampViewport();
+    dirty = true;
+    hidePopup();
+  } else if (e.touches.length >= 2) {
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const mid = touchMidpoint(t0, t1);
+    const nextScale = pinchStartScale * (touchDistance(t0, t1) / Math.max(1, pinchStartDist));
+    scale = nextScale;
+    clampViewport();
+    panX = pinchAnchorWX - (mid.x - W / 2) / scale;
+    panY = pinchStartPanY + (mid.y - pinchStartMidY);
+    clampViewport();
+    dirty = true;
+    hidePopup();
+  }
+  hintEl.classList.add('gone');
+}, { passive: true });
+
+canvas.addEventListener('touchend', e => {
+  suppressMouseUntil = Date.now() + 800;
+
+  if (touchMode === 'pan' && e.touches.length === 0) {
+    const dt = Date.now() - touchStartTime;
+    isDragging = false;
+    if (!touchMoved && dt < 280) {
+      const t = e.changedTouches[0];
+      const found = findNearest(t.clientX, t.clientY);
+      if (found) {
+        setActiveDot(found);
+        showPopup(found);
+      } else {
+        setActiveDot(null);
+      }
+    }
+  }
+
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchMode = 'pan';
+    touchMoved = false;
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    touchStartTime = Date.now();
+    dragSX = t.clientX;
+    dragSY = t.clientY;
+    dragPX = panX;
+    dragPY = panY;
+    isDragging = true;
+  } else if (e.touches.length >= 2) {
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const mid = touchMidpoint(t0, t1);
+    touchMode = 'pinch';
+    pinchStartDist = Math.max(1, touchDistance(t0, t1));
+    pinchStartScale = scale;
+    pinchStartMidX = mid.x;
+    pinchStartMidY = mid.y;
+    pinchAnchorWX = toWX(mid.x);
+    pinchStartPanY = panY;
+    isDragging = false;
+  } else {
+    touchMode = null;
+    isDragging = false;
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchcancel', () => {
+  suppressMouseUntil = Date.now() + 800;
+  touchMode = null;
+  isDragging = false;
+}, { passive: true });
+
+canvas.addEventListener('mousemove', e => {
+  if (Date.now() < suppressMouseUntil) return;
+  if (isDragging) {
+    panX = dragPX - (e.clientX - dragSX) / scale;
+    panY = dragPY + (e.clientY - dragSY);
+    clampViewport(); dirty = true;
+  } else updateHover(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('mousedown', e => {
+  if (Date.now() < suppressMouseUntil) return;
+  isDragging = true; dragSX = e.clientX; dragSY = e.clientY; dragPX = panX; dragPY = panY;
+  canvas.classList.add('dragging');
+  if (hovered) { fadingDot = hovered; hovered = null; dirty = true; }
+  hidePopup();
+});
+
+window.addEventListener('mouseup', () => {
+  if (Date.now() < suppressMouseUntil) return;
+  if (isDragging) { isDragging = false; canvas.classList.remove('dragging'); dirty = true; }
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (Date.now() < suppressMouseUntil) return;
+  if (hovered) { fadingDot = hovered; hovered = null; dirty = true; }
+  canvas.style.cursor = 'grab';
+  hidePopup();
+});
+
+canvas.addEventListener('wheel', e => {
+  if (Date.now() < suppressMouseUntil) return;
+  e.preventDefault();
+  const factor = Math.exp(-e.deltaY / (e.deltaMode === 0 ? 500 : 15000));
+  const wx     = toWX(e.clientX);
+  scale *= factor;
+  clampViewport();
+  panX = wx - (e.clientX - W / 2) / scale;
+  clampViewport();
+  dirty = true;
+  if (hovered) {
+    hovered.hoverT = 0;
+    if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0;
+    fadingDot = null;
+    hovered = null;
+    hidePopup();
+  }
+  document.getElementById('hint').classList.add('gone');
+}, { passive: false });
+
+const filterNBAEl = document.getElementById('filter-nba');
+const filterHoopsEl = document.getElementById('filter-hoops');
+
+function onFilterToggle(changedEl) {
+  if (!filterNBAEl.checked && !filterHoopsEl.checked) {
+    changedEl.checked = true;
+    return;
+  }
+  updateVisibleDots();
+}
+
+filterNBAEl.addEventListener('change', () => onFilterToggle(filterNBAEl));
+filterHoopsEl.addEventListener('change', () => onFilterToggle(filterHoopsEl));
+
+window.addEventListener('resize', () => {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  clampViewport();
+  applyResponsiveChrome();
+  dirty = true;
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════════════════
+
+document.fonts.ready.then(() => {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  initViewport();
+  clampViewport();
+  updateSourceCounts();
+  updateVisibleDots();
+  applyResponsiveChrome();
+  requestAnimationFrame(tick);
+  setTimeout(() => document.getElementById('hint').classList.add('gone'), 5000);
+});

@@ -2,6 +2,11 @@ import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
+  const url = env.SUPABASE_URL || '';
+  const key = env.SUPABASE_KEY || '';
+  if (!url || !key) {
+    console.warn('[vite] SUPABASE_URL / SUPABASE_KEY not set — data will not load');
+  }
   return {
     plugins: [{
       name: 'inject-env',
@@ -9,7 +14,7 @@ export default defineConfig(({ mode }) => {
         return [{
           tag: 'script',
           attrs: { type: 'text/javascript' },
-          children: `const SUPABASE_URL = '${env.SUPABASE_URL}'; const SUPABASE_ANON_KEY = '${env.SUPABASE_KEY}';`,
+          children: `const SUPABASE_URL = '${url}'; const SUPABASE_ANON_KEY = '${key}';`,
           injectTo: 'head-prepend'
         }];
       }

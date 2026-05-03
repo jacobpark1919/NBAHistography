@@ -14,6 +14,8 @@ const TODAY_UTC = new Date(Date.UTC(TODAY.getUTCFullYear(), TODAY.getUTCMonth(),
 const TOTAL_DAYS = Math.floor((TODAY_UTC.getTime() - NBA_EPOCH_MS) / 86400000);
 const START_YR = FIRST_EVENT_DATE.getUTCFullYear();
 const END_YR = TODAY_UTC.getUTCFullYear();
+const PAN_MIN_DAY = Math.floor((Date.UTC(1850, 0, 1) - NBA_EPOCH_MS) / 86400000);
+const PAN_MAX_DAY = Math.floor((Date.UTC(2030, 0, 1) - NBA_EPOCH_MS) / 86400000);
 
 const dayOf = s => Math.max(0, Math.floor((parseISODateUTC(s).getTime() - NBA_EPOCH_MS) / 86400000));
 const dayToDate = d => new Date(NBA_EPOCH_MS + d * 86400000);
@@ -239,7 +241,11 @@ function clampViewport() {
   const maxS = 120;
   scale = Math.max(minS, Math.min(maxS, scale));
   const hw = W / (2 * scale);
-  panX = Math.max(-hw * 0.3, Math.min(TOTAL_DAYS + hw * 0.3, panX));
+  const panMin = PAN_MIN_DAY + hw;
+  const panMax = PAN_MAX_DAY - hw;
+  panX = panMin <= panMax
+    ? Math.max(panMin, Math.min(panMax, panX))
+    : (PAN_MIN_DAY + PAN_MAX_DAY) / 2;
   panY = Math.max(-700, Math.min(700, panY));
 }
 
@@ -275,36 +281,27 @@ function drawGrid() {
   const monthPx = scale * 30;
   const dayPx   = scale;
   const vL = toWX(-4), vR = toWX(W + 4);
-  const sd = dayToDate(Math.max(0, Math.floor(vL)));
-  const ed = dayToDate(Math.min(TOTAL_DAYS, Math.ceil(vR)));
+  const fyU = yr => Math.floor((Date.UTC(yr, 0, 1) - NBA_EPOCH_MS) / 86400000);
+  const sd = dayToDate(Math.floor(vL)), ed = dayToDate(Math.ceil(vR));
   const sY = sd.getUTCFullYear(), eY = ed.getUTCFullYear();
 
   ctx.save(); ctx.lineWidth = 1;
 
-  // Decade lines — always present, clearly bright
+  // Decade lines — always present, extend beyond data bounds
   ctx.strokeStyle = 'rgba(255,255,255,0.18)';
   for (let yr = Math.ceil(sY / 10) * 10; yr <= eY; yr += 10) {
-    const sx = toSX(fy(yr));
-    if (sx < -1 || sx > W + 1) continue;
-    ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
-  }
-
-  // 5-year lines — always visible, subdivide decades
-  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
-  for (let yr = Math.ceil(sY / 5) * 5; yr <= eY; yr += 5) {
-    if (yr % 10 === 0) continue;
-    const sx = toSX(fy(yr));
+    const sx = toSX(fyU(yr));
     if (sx < -1 || sx > W + 1) continue;
     ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
   }
 
   // Year lines
-  const yrA = Math.min(0.10, Math.max(0, (yearPx - 8) / 60) * 0.10);
+  const yrA = Math.min(0.10, Math.max(0, (yearPx - 28) / 140) * 0.10);
   if (yrA > 0.002) {
     ctx.strokeStyle = `rgba(255,255,255,${yrA})`;
     for (let yr = sY; yr <= eY; yr++) {
       if (yr % 10 === 0) continue;
-      const sx = toSX(fy(yr));
+      const sx = toSX(fyU(yr));
       if (sx < -1 || sx > W + 1) continue;
       ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
     }
@@ -465,10 +462,8 @@ function drawAxisLabels() {
   const monthPx = scale * 30;
   const dayPx   = scale;
   const vL = toWX(-10), vR = toWX(W + 10);
-  const clampedL = Math.max(0, Math.floor(vL));
-  const clampedR = Math.min(TOTAL_DAYS, Math.ceil(vR));
-  const sd = dayToDate(clampedL);
-  const ed = dayToDate(clampedR);
+  const fyU = yr => Math.floor((Date.UTC(yr, 0, 1) - NBA_EPOCH_MS) / 86400000);
+  const sd = dayToDate(Math.floor(vL)), ed = dayToDate(Math.ceil(vR));
   const sY = sd.getUTCFullYear(), eY = ed.getUTCFullYear();
 
   ctx.save();
@@ -478,8 +473,9 @@ function drawAxisLabels() {
   // Fixed bottom band for years so they always remain visible.
   const decSz = Math.max(12, Math.min(34, yearPx * 0.055));
   const decA  = Math.min(0.96, 0.60 + yearPx * 0.0012);
+  const yrFade = Math.min(1, Math.max(0, (yearPx - 28) / 48));
   const yrSz = Math.max(10, Math.min(22, yearPx * 0.044));
-  const bottomBandH = Math.max(70, decSz + yrSz + 28);
+  const bottomBandH = Math.max(70, decSz + (yrFade > 0.02 ? yrSz + 20 : 0) + 24);
   const bottomBandTop = H - bottomBandH;
 
   const bottomFade = ctx.createLinearGradient(0, bottomBandTop, 0, H);
@@ -493,14 +489,11 @@ function drawAxisLabels() {
   const yearY   = decadeY - decSz - 10;
 
   // Cross-fade: 5-year labels fade out as individual year labels fade in
-  const fiveYrFade = Math.min(1, Math.max(0, (40 - yearPx) / 22));
-  const yrFadeAdj  = Math.min(1, Math.max(0, (yearPx - 18) / 22));
-
   // Decade labels anchored to the bottom of the screen.
   ctx.font = `${decSz}px "DM Mono", monospace`;
   for (let yr = Math.ceil(sY / 10) * 10; yr <= eY; yr += 10) {
-    const d0 = fy(yr), d1 = fy(yr + 1) - 1;
-    const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
+    const d0 = fyU(yr), d1 = fyU(yr + 1) - 1;
+    const cx = toSX((d0 + d1) / 2);
     if (cx < 38 || cx > W - 38) continue;
     const tx = toSX(d0);
     ctx.save();
@@ -511,28 +504,15 @@ function drawAxisLabels() {
     drawAxisText(yr, cx, decadeY, `rgba(255,255,255,${decA})`, 6, 'rgba(6,10,20,0.98)', 8);
   }
 
-  // 5-year labels: always visible when zoomed out, fade as individual years take over
-  if (fiveYrFade > 0.02) {
-    const fiveYrSz = Math.max(9, Math.min(16, decSz * 0.52));
-    ctx.font = `${fiveYrSz}px "DM Mono", monospace`;
-    for (let yr = Math.ceil(sY / 5) * 5; yr <= eY; yr += 5) {
-      if (yr % 10 === 0) continue;
-      const d0 = fy(yr), d1 = fy(yr + 1) - 1;
-      const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
-      if (cx < 28 || cx > W - 28) continue;
-      drawAxisText(yr, cx, yearY, `rgba(255,255,255,${0.60 * fiveYrFade})`, 4, 'rgba(6,10,20,0.98)', 4);
-    }
-  }
-
-  // Individual year labels fade in as 5-year labels fade out
-  if (yrFadeAdj > 0.02) {
+  // Individual year labels
+  if (yrFade > 0.02) {
     ctx.font = `${yrSz}px "DM Mono", monospace`;
     for (let yr = sY; yr <= eY; yr++) {
       if (yr % 10 === 0) continue;
-      const d0 = fy(yr), d1 = fy(yr + 1) - 1;
-      const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
+      const d0 = fyU(yr), d1 = fyU(yr + 1) - 1;
+      const cx = toSX((d0 + d1) / 2);
       if (cx < 28 || cx > W - 28) continue;
-      drawAxisText(yr, cx, yearY, `rgba(255,255,255,${0.78 * yrFadeAdj})`, 4.5, 'rgba(6,10,20,0.98)', 5);
+      drawAxisText(yr, cx, yearY, `rgba(255,255,255,${0.78 * yrFade})`, 4.5, 'rgba(6,10,20,0.98)', 5);
     }
   }
 

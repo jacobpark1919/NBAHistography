@@ -193,7 +193,7 @@ function binWidth() {
   // rather than flickering between adjacent values as you zoom — a dot pair
   // stacked vs. side-by-side won't keep swapping with small zoom changes.
   const raw = 2 * zoomedDotR() / scale;
-  const STEPS = [1, 2, 3, 4, 5, 7, 10, 14, 20, 30, 45, 60, 91, 130, 182, 270, 365];
+  const STEPS = [1, 3, 7, 14, 30, 60, 91, 182, 365];
   for (const s of STEPS) if (s >= raw) return s;
   return 365;
 }
@@ -371,7 +371,7 @@ function drawBins() {
   // Entry (initial load): fast so the fall-in feels snappy.
   // Shuffle (zoom rebin): slower so repositioning looks graceful.
   const lerpTEntry   = 1 - Math.exp(-18 * lastFrameDt);
-  const lerpTShuffle = 1 - Math.exp(-5  * lastFrameDt);
+  const lerpTShuffle = 1 - Math.exp(-3.5 * lastFrameDt);
 
   const vL    = toWX(-r0 - 2);
   const vR    = toWX(W + r0 + 2);
@@ -382,7 +382,7 @@ function drawBins() {
 
   // Keep animating while bin-width blend is in progress.
   if (bwBlend < 1) {
-    bwBlend = Math.min(1, bwBlend + 4 * lastFrameDt);
+    bwBlend = Math.min(1, bwBlend + 2.5 * lastFrameDt);
     stillAnimating = true;
   }
 

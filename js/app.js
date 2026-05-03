@@ -193,7 +193,7 @@ function binWidth() {
   // rather than flickering between adjacent values as you zoom — a dot pair
   // stacked vs. side-by-side won't keep swapping with small zoom changes.
   const raw = 2 * zoomedDotR() / scale;
-  const STEPS = [1, 3, 7, 14, 30, 60, 91, 182, 365];
+  const STEPS = [1, 2, 3, 4, 5, 7, 10, 14, 20, 30, 45, 60, 91, 130, 182, 270, 365];
   for (const s of STEPS) if (s >= raw) return s;
   return 365;
 }
@@ -354,6 +354,14 @@ function drawBins() {
   const ay   = axisY();
   const r0   = zoomedDotR();   // base radius grows with zoom
 
+  // Detect bin-width ladder step and animate a blend between old and new bin
+  // centers so columns spread apart gradually instead of snapping all at once.
+  if (bwCurr === 0) {
+    bwCurr = bwPrev = bw; bwBlend = 1;
+  } else if (bw !== bwCurr) {
+    bwPrev = bwCurr; bwCurr = bw; bwBlend = 0;
+  }
+
   // Clear screen-position cache (dots not drawn this frame become unhoverable)
   for (const d of realDots) { d._sx = null; d._sy = null; }
 
@@ -372,13 +380,19 @@ function drawBins() {
 
   let stillAnimating = false;
 
+  // Keep animating while bin-width blend is in progress.
+  if (bwBlend < 1) {
+    bwBlend = Math.min(1, bwBlend + 4 * lastFrameDt);
+    stillAnimating = true;
+  }
+
   for (let b = firstBin; b <= lastBin; b++) {
     const d0 = b * bw;
     const d1 = Math.min(TOTAL_DAYS, (b + 1) * bw - 1);
     if (d0 > TOTAL_DAYS) break;
 
-    const targetBinDays = (d0 + d1) / 2;
-    const targetSx = toSX(targetBinDays);
+    const currBinCenter = (d0 + d1) / 2;
+    const targetSx = toSX(currBinCenter);
     if (targetSx < -r0 - 2 || targetSx > W + r0 + 2) continue;
 
     // Collect real events in this bin, innermost (imp 1) first
@@ -394,6 +408,15 @@ function drawBins() {
       const row  = Math.floor(i / 2);
       const sign = (i % 2 === 0) ? -1 : 1;
       const targetYOff = sign * (row + 0.5) * stackStep();
+
+      // Blend the x-target between old bin center and new bin center so columns
+      // spread apart gradually when the bin ladder steps.
+      let targetBinDays = currBinCenter;
+      if (bwBlend < 1 && bwPrev > 0) {
+        const pb = Math.floor(dot.worldX / bwPrev);
+        const prevCenter = (pb * bwPrev + Math.min(TOTAL_DAYS, (pb + 1) * bwPrev - 1)) / 2;
+        targetBinDays = prevCenter + (currBinCenter - prevCenter) * bwBlend;
+      }
 
       // First-ever positioning: snap x, start y at axis so dots fall into place.
       if (dot._binDays === null) {
@@ -521,8 +544,8 @@ function drawAxisLabels() {
   }
 
   // Months and days stay on separate rows so they never overlap.
-  const moFade = Math.min(1, Math.max(0, (monthPx - 24) / 42));
-  const dayFade = Math.min(1, Math.max(0, (dayPx - 20) / 26));
+  const moFade = Math.min(1, Math.max(0, (monthPx - 14) / 16));
+  const dayFade = Math.min(1, Math.max(0, (dayPx - 14) / 12));
   const moSz = Math.max(9, Math.min(16, monthPx * 0.30));
   const daySz = Math.max(10, Math.min(18, dayPx * 0.17));
   const safeBottom = bottomBandTop - 10;
@@ -604,6 +627,11 @@ let hovered   = null;
 let fadingDot = null;
 let lockedDot = null;   // desktop: dot whose popup is pinned open by a click
 let dirty     = true;
+
+// Bin-width transition — smoothly blends old→new bin centers when the ladder steps.
+let bwPrev  = 0;
+let bwCurr  = 0;
+let bwBlend = 1.0; // 0 = fully prev, 1 = fully curr
 
 function findNearest(mx, my) {
   const HIT2 = 22 * 22;
@@ -738,10 +766,10 @@ function applyResponsiveChrome() {
   const headerBottom = Math.round(headerEl.offsetTop + headerEl.offsetHeight + 10);
 
   if (mobile) {
-    vpEl.style.left = '12px';
+    vpEl.style.left = '14px';
     vpEl.style.right = '12px';
     vpEl.style.top = `${headerBottom}px`;
-    vpShowBtn.style.left = '12px';
+    vpShowBtn.style.left = '14px';
     vpShowBtn.style.right = 'auto';
     vpShowBtn.style.top = `${headerBottom}px`;
     vpShowBtn.style.bottom = 'auto';

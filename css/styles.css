@@ -21,9 +21,9 @@ body::before {
 }
 #canvas.dragging { cursor: grabbing; }
 #hamburger {
-  position: fixed; top: 28px; left: 24px; z-index: 35;
+  flex-shrink: 0;
   width: 34px; height: 34px;
-  background: rgba(7,10,18,0.88); border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.16);
   border-radius: 7px; cursor: pointer; pointer-events: auto;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
   transition: background 0.15s, border-color 0.15s;
@@ -31,7 +31,7 @@ body::before {
 #hamburger:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.35); }
 #hamburger span { display: block; width: 14px; height: 1.5px; background: rgba(255,255,255,0.88); border-radius: 1px; }
 #header {
-  position: fixed; top: 24px; left: 76px; z-index: 30;
+  position: fixed; top: 24px; left: 24px; z-index: 30;
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
   padding: 16px 20px 18px;
   background: linear-gradient(180deg, rgba(7,10,18,0.92), rgba(7,10,18,0.58));
@@ -58,7 +58,7 @@ body::before {
 #sidebar {
   position: fixed; top: 0; left: 0; height: 100%; width: 360px; z-index: 25;
   display: flex; flex-direction: column; gap: 28px;
-  padding: 80px 26px 36px;
+  padding: 28px 26px 36px;
   background: linear-gradient(180deg, rgba(7,10,18,0.98), rgba(7,10,18,0.94));
   border-right: 1px solid rgba(255,255,255,0.09);
   box-shadow: 6px 0 40px rgba(0,0,0,0.5);
@@ -294,18 +294,18 @@ body::before {
 
 
 @media (max-width: 760px) {
-  #hamburger { top: 16px; left: 14px; }
   #header {
-    top: 12px; left: 62px; right: 12px;
+    top: 12px; left: 14px; right: 12px;
     padding: 12px 14px 13px; gap: 6px; border-radius: 12px;
   }
-  #header.pushed { left: calc(300px + 14px); right: auto; }
+  #sidebar { width: 270px; }
+  #header.pushed { left: calc(270px + 10px); right: 12px; }
   .h-row { gap: 10px; }
   .h-title { font-size: 31px; letter-spacing: 3.2px; }
   .h-pip { width: 8px; height: 8px; }
   .h-sub { font-size: 12px; letter-spacing: 1.5px; line-height: 1.2; }
   #vp {
-    left: 12px; right: 12px; top: 96px;
+    left: 14px; right: 12px; top: 96px;
     padding: 11px 14px 12px;
     align-items: flex-start; text-align: left; border-radius: 12px;
   }

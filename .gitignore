@@ -1,0 +1,5 @@
+.env
+*.env
+js/config.js
+node_modules/
+nba_events.csv

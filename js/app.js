@@ -50,6 +50,11 @@ const SOURCE_META = {
     color: '#ffd84d',
     label: 'Hoopsrewind.app',
     url: 'https://hoopsrewind.app'
+  },
+  'sports_events': {
+    color: '#64b5f6',
+    label: 'Sports Events',
+    url: ''
   }
 };
 
@@ -72,31 +77,30 @@ function eraRGB(t) {                        // t = 0..1 across timeline
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── Build real dot objects ────────────────────────────────────────────────────
-const realDots = REAL_EVENTS_DATA.map((e, i) => {
-  const sourceMeta = SOURCE_META[e.source] || {};
-  return {
-    worldX : dayOf(e.date),
-    imp    : e.imp,
-    cat    : e.cat,
-    color  : sourceMeta.color || COLORS[e.cat] || '#c9082a',
-    title  : e.title,
-    desc   : e.desc,
-    source : e.source,
-    date   : e.date,
-    hoverT : 0,
-    id     : i,
-    _sx    : null,   // screen position written each frame (for hover hits)
-    _sy    : null,
-    // Animated layout target — _binDays is the day-position of the dot's
-    // current bin's center; _yOff is its vertical offset from the axis.
-    // These lerp toward each frame's recomputed targets so dots slide into
-    // their new column/row instead of snapping when the binning changes.
-    _binDays : null,
-    _yOff    : null,
-  };
-});
+function buildDots(events) {
+  return events.map((e, i) => {
+    const sourceMeta = SOURCE_META[e.source] || {};
+    return {
+      worldX : dayOf(e.date),
+      imp    : e.imp,
+      cat    : e.cat,
+      color  : sourceMeta.color || COLORS[e.cat] || '#c9082a',
+      title  : e.title,
+      desc   : e.desc,
+      source : e.source,
+      date   : e.date,
+      hoverT : 0,
+      id     : i,
+      _sx    : null,
+      _sy    : null,
+      _binDays : null,
+      _yOff    : null,
+    };
+  });
+}
 
-let visibleRealDots = realDots.slice();
+let realDots = [];
+let visibleRealDots = [];
 
 function updateSourceCounts() {
   const nbaCount = realDots.filter(d => d.source === 'nba.com/history').length;
@@ -111,7 +115,8 @@ function updateVisibleDots() {
   const showHoops = document.getElementById('filter-hoops').checked;
   visibleRealDots = realDots.filter(d =>
     (showNBA && d.source === 'nba.com/history') ||
-    (showHoops && d.source === 'hoopsrewind.app')
+    (showHoops && d.source === 'hoopsrewind.app') ||
+    d.source === 'sports_events'
   );
   if (hovered && !visibleRealDots.includes(hovered)) hovered = null;
   if (fadingDot && !visibleRealDots.includes(fadingDot)) fadingDot = null;
@@ -284,8 +289,17 @@ function drawGrid() {
     ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
   }
 
+  // 5-year lines — always visible, subdivide decades
+  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+  for (let yr = Math.ceil(sY / 5) * 5; yr <= eY; yr += 5) {
+    if (yr % 10 === 0) continue;
+    const sx = toSX(fy(yr));
+    if (sx < -1 || sx > W + 1) continue;
+    ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
+  }
+
   // Year lines
-  const yrA = Math.min(0.10, Math.max(0, (yearPx - 28) / 140) * 0.10);
+  const yrA = Math.min(0.10, Math.max(0, (yearPx - 8) / 60) * 0.10);
   if (yrA > 0.002) {
     ctx.strokeStyle = `rgba(255,255,255,${yrA})`;
     for (let yr = sY; yr <= eY; yr++) {
@@ -464,9 +478,8 @@ function drawAxisLabels() {
   // Fixed bottom band for years so they always remain visible.
   const decSz = Math.max(12, Math.min(34, yearPx * 0.055));
   const decA  = Math.min(0.96, 0.60 + yearPx * 0.0012);
-  const yrFade = Math.min(1, Math.max(0, (yearPx - 28) / 48));
   const yrSz = Math.max(10, Math.min(22, yearPx * 0.044));
-  const bottomBandH = Math.max(70, decSz + (yrFade > 0.02 ? yrSz + 20 : 0) + 24);
+  const bottomBandH = Math.max(70, decSz + yrSz + 28);
   const bottomBandTop = H - bottomBandH;
 
   const bottomFade = ctx.createLinearGradient(0, bottomBandTop, 0, H);
@@ -478,6 +491,10 @@ function drawAxisLabels() {
 
   const decadeY = H - 16;
   const yearY   = decadeY - decSz - 10;
+
+  // Cross-fade: 5-year labels fade out as individual year labels fade in
+  const fiveYrFade = Math.min(1, Math.max(0, (40 - yearPx) / 22));
+  const yrFadeAdj  = Math.min(1, Math.max(0, (yearPx - 18) / 22));
 
   // Decade labels anchored to the bottom of the screen.
   ctx.font = `${decSz}px "DM Mono", monospace`;
@@ -494,15 +511,28 @@ function drawAxisLabels() {
     drawAxisText(yr, cx, decadeY, `rgba(255,255,255,${decA})`, 6, 'rgba(6,10,20,0.98)', 8);
   }
 
-  // Individual year labels on a separate row above the decades.
-  if (yrFade > 0.02) {
+  // 5-year labels: always visible when zoomed out, fade as individual years take over
+  if (fiveYrFade > 0.02) {
+    const fiveYrSz = Math.max(9, Math.min(16, decSz * 0.52));
+    ctx.font = `${fiveYrSz}px "DM Mono", monospace`;
+    for (let yr = Math.ceil(sY / 5) * 5; yr <= eY; yr += 5) {
+      if (yr % 10 === 0) continue;
+      const d0 = fy(yr), d1 = fy(yr + 1) - 1;
+      const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
+      if (cx < 28 || cx > W - 28) continue;
+      drawAxisText(yr, cx, yearY, `rgba(255,255,255,${0.60 * fiveYrFade})`, 4, 'rgba(6,10,20,0.98)', 4);
+    }
+  }
+
+  // Individual year labels fade in as 5-year labels fade out
+  if (yrFadeAdj > 0.02) {
     ctx.font = `${yrSz}px "DM Mono", monospace`;
     for (let yr = sY; yr <= eY; yr++) {
       if (yr % 10 === 0) continue;
       const d0 = fy(yr), d1 = fy(yr + 1) - 1;
       const cx = toSX((d0 + Math.min(TOTAL_DAYS, d1)) / 2);
       if (cx < 28 || cx > W - 28) continue;
-      drawAxisText(yr, cx, yearY, `rgba(255,255,255,${0.78 * yrFade})`, 4.5, 'rgba(6,10,20,0.98)', 5);
+      drawAxisText(yr, cx, yearY, `rgba(255,255,255,${0.78 * yrFadeAdj})`, 4.5, 'rgba(6,10,20,0.98)', 5);
     }
   }
 
@@ -647,6 +677,21 @@ let popupTimer = null;
 const MOBILE_BREAKPOINT = 760;
 const headerEl = document.getElementById('header');
 const headerSubEl = headerEl.querySelector('.h-sub');
+const sidebarEl = document.getElementById('sidebar');
+const hamburgerBtn = document.getElementById('hamburger');
+hamburgerBtn.addEventListener('click', () => {
+  sidebarEl.classList.toggle('open');
+  headerEl.classList.toggle('pushed');
+});
+document.querySelectorAll('.sb-nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sb-nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.sb-page').forEach(p => p.classList.add('sb-hidden'));
+    btn.classList.add('active');
+    document.getElementById(`sb-${btn.dataset.page}`).classList.remove('sb-hidden');
+  });
+});
+
 const vpEl = document.getElementById('vp');
 const vpCloseBtn = document.getElementById('vp-close');
 const vpShowBtn = document.getElementById('vp-show');
@@ -1014,7 +1059,9 @@ window.addEventListener('pageshow', e => {
 //  INIT
 // ══════════════════════════════════════════════════════════════════════════════
 
-document.fonts.ready.then(() => {
+Promise.all([document.fonts.ready, loadEvents()]).then(([, events]) => {
+  realDots = buildDots(events);
+  visibleRealDots = realDots.slice();
   resizeCanvas();
   initViewport();
   clampViewport();

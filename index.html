@@ -11,30 +11,59 @@
 <link rel="stylesheet" href="css/styles.css?v=20260501c">
 </head>
 <body>
+<button id="hamburger" type="button" aria-label="Toggle menu">
+  <span></span><span></span><span></span>
+</button>
 <div id="header">
   <div class="h-row">
-    <span class="h-title">NBA Histography</span>
+    <span class="h-title">Hoopstography</span>
     <span class="h-pip"></span>
   </div>
   <div class="h-sub">Scroll to zoom · Drag to pan · 1894-Present</div>
 </div>
-<div id="vp">
-  <button id="vp-close" type="button" aria-label="Hide info panel" title="Hide">×</button>
-  <div class="vp-main">About · Powered by</div>
-  <div class="vp-meta vp-links">
-    <a class="vp-link vp-link-nba" href="https://www.nba.com/history" target="_blank" rel="noopener noreferrer">NBA.com/history</a>
-    <span>and</span>
-    <a class="vp-link vp-link-hoops" href="https://hoopsrewind.app" target="_blank" rel="noopener noreferrer">Hoopsrewind.app</a>
+<div id="sidebar">
+  <nav class="sb-nav">
+    <button class="sb-nav-btn active" data-page="about">About</button>
+    <button class="sb-nav-btn" data-page="contact">Contact</button>
+  </nav>
+  <div class="sb-page" id="sb-about">
+    <div class="sb-section">
+      <div class="sb-heading">About the Site</div>
+      <p class="sb-body">Hoopstography is a visual timeline of professional basketball history, spanning from the sport's earliest organized roots in 1894 to the present day. Every dot is a real event — zoom in to explore eras, hover to read.</p>
+      <p class="sb-body">Heavily inspired by <a class="sb-link" href="https://histography.io" target="_blank" rel="noopener noreferrer">Histography.io</a> by Matan Stauber, a stunning interactive timeline of all of human history sourced from Wikipedia.</p>
+    </div>
+    <div class="sb-section">
+      <div class="sb-heading">Data Sources</div>
+      <p class="sb-body"><a class="sb-link" href="https://www.nba.com/history" target="_blank" rel="noopener noreferrer">NBA.com/history</a> — The official NBA historical record, scraped and structured into 1,400+ milestone events covering championships, records, rule changes, expansions, and drafts.</p>
+      <p class="sb-body"><a class="sb-link" href="https://hoopsrewind.app" target="_blank" rel="noopener noreferrer">Hoopsrewind.app</a> — A companion project sharing the same event database. Events are filtered to basketball only and deduplicated against the NBA.com dataset to avoid overlap.</p>
+    </div>
+    <div class="sb-section">
+      <div class="sb-heading">About Me</div>
+      <p class="sb-body">NBA history nerd and data engineer who likes to build websites. This is one of those websites.</p>
+    </div>
+    <div class="sb-section">
+      <a class="sb-donate" href="" target="_blank" rel="noopener noreferrer">Donate ↗</a>
+    </div>
   </div>
-  <div class="vp-meta">A visual timeline of pro basketball history</div>
+  <div class="sb-page sb-hidden" id="sb-contact">
+    <div class="sb-section">
+      <div class="sb-heading">Get in Touch</div>
+      <p class="sb-body">Have a suggestion, spotted a missing event, or just want to talk basketball history?</p>
+      <a class="sb-link" href="mailto:sportsrewind123@gmail.com">sportsrewind123@gmail.com</a>
+    </div>
+  </div>
+</div>
+<div id="vp">
+  <button id="vp-close" type="button" aria-label="Hide panel" title="Hide">×</button>
+  <div class="vp-main">Powered by</div>
   <div class="vp-counts">
     <div class="vp-count-row">
-      <span class="vp-count-label">NBA.com/history</span>
-      <span class="vp-count-value nba"><span id="nba-count">0</span> events</span>
+      <a class="vp-link vp-link-nba" href="https://www.nba.com/history" target="_blank" rel="noopener noreferrer">NBA.com/history</a>
+      <span class="vp-count-value" style="color:#ffffff"><span id="nba-count">0</span> events</span>
     </div>
     <div class="vp-count-row">
-      <span class="vp-count-label">Hoopsrewind.app</span>
-      <span class="vp-count-value hoops"><span id="hoops-count">0</span> events</span>
+      <a class="vp-link vp-link-hoops" href="https://hoopsrewind.app" target="_blank" rel="noopener noreferrer">Hoopsrewind.app</a>
+      <span class="vp-count-value" style="color:#ffffff"><span id="hoops-count">0</span> events</span>
     </div>
     <div class="vp-count-row">
       <span class="vp-count-label">Combined</span>
@@ -54,7 +83,7 @@
     </label>
   </div>
 </div>
-<button id="vp-show" type="button" aria-label="Show info panel">About</button>
+<button id="vp-show" type="button" aria-label="Show panel">◦</button>
 <div id="hint">Scroll to dive in · Drag to explore</div>
 <canvas id="canvas"></canvas>
 
@@ -68,7 +97,7 @@
   </div>
 </div>
 
-<script src="js/data.js?v=20260501c"></script>
+<script src="js/supabase.js"></script>
 <script src="js/app.js?v=20260501c"></script>
 </body>
 </html>

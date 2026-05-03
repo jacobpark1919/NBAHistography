@@ -665,6 +665,7 @@ const popupStem = document.getElementById('popup-stem');
 
 let popupTimer = null;
 let didDrag = false;
+let touchedActiveDot = null; // dot whose popup was open when a touch started
 
 
 const MOBILE_BREAKPOINT = 760;
@@ -894,6 +895,8 @@ canvas.addEventListener('touchstart', e => {
     dragPX = panX;
     dragPY = panY;
     isDragging = true;
+    // Snapshot which dot's popup was open before hidePopup() clears it.
+    touchedActiveDot = popup.classList.contains('visible') ? hovered : null;
     hidePopup();
   } else if (e.touches.length >= 2) {
     const t0 = e.touches[0], t1 = e.touches[1];
@@ -954,22 +957,22 @@ canvas.addEventListener('touchend', e => {
     if (!touchMoved && dt < 280) {
       const t = e.changedTouches[0];
       const found = findNearest(t.clientX, t.clientY);
-      if (found) {
-        if (found === hovered && popup.classList.contains('visible')) {
-          setActiveDot(null); // tap same dot again → close
-        } else {
-          setActiveDot(found, true);
-        }
+      if (found && found === touchedActiveDot) {
+        setActiveDot(null); // tap same dot whose popup was open → close
+      } else if (found) {
+        setActiveDot(found, true);
       } else {
         setActiveDot(null);
       }
+      touchedActiveDot = null;
     }
   }
 
   if (e.touches.length === 1) {
     const t = e.touches[0];
+    const wasPinching = touchMode === 'pinch';
     touchMode = 'pan';
-    touchMoved = false;
+    touchMoved = wasPinching; // coming off a pinch must not register as a tap
     touchStartX = t.clientX;
     touchStartY = t.clientY;
     touchStartTime = Date.now();

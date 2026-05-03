@@ -14,8 +14,6 @@ const TODAY_UTC = new Date(Date.UTC(TODAY.getUTCFullYear(), TODAY.getUTCMonth(),
 const TOTAL_DAYS = Math.floor((TODAY_UTC.getTime() - NBA_EPOCH_MS) / 86400000);
 const START_YR = FIRST_EVENT_DATE.getUTCFullYear();
 const END_YR = TODAY_UTC.getUTCFullYear();
-const PAN_MIN_DAY = Math.floor((Date.UTC(1850, 0, 1) - NBA_EPOCH_MS) / 86400000);
-const PAN_MAX_DAY = Math.floor((Date.UTC(2030, 0, 1) - NBA_EPOCH_MS) / 86400000);
 
 const dayOf = s => Math.max(0, Math.floor((parseISODateUTC(s).getTime() - NBA_EPOCH_MS) / 86400000));
 const dayToDate = d => new Date(NBA_EPOCH_MS + d * 86400000);
@@ -95,8 +93,9 @@ function buildDots(events) {
       id     : i,
       _sx    : null,
       _sy    : null,
-      _binDays : null,
-      _yOff    : null,
+      _binDays     : null,
+      _yOff        : null,
+      _initialEntry: true,
     };
   });
 }
@@ -120,8 +119,8 @@ function updateVisibleDots() {
     (showHoops && d.source === 'hoopsrewind.app') ||
     d.source === 'sports_events'
   );
-  if (hovered && !visibleRealDots.includes(hovered)) hovered = null;
-  if (fadingDot && !visibleRealDots.includes(fadingDot)) fadingDot = null;
+  if (hovered && !visibleRealDots.includes(hovered)) { hovered.hoverT = 0; hovered = null; }
+  if (fadingDot && !visibleRealDots.includes(fadingDot)) { fadingDot.hoverT = 0; fadingDot = null; }
   // Reset animated layout positions: dots that were hidden then reappear
   // would otherwise slide from wherever they were last drawn.
   for (const d of realDots) { d._binDays = null; d._yOff = null; }
@@ -189,10 +188,14 @@ function drawAxisText(text, x, y, fillStyle, strokeWidth = 4, strokeStyle = 'rgb
 }
 
 function binWidth() {
-  // Merge days closer than one rendered-dot diameter apart. Uses the
-  // zoom-aware radius (not the base) so adjacent bins never overlap as the
-  // dots grow during zoom-in.
-  return Math.max(1, Math.ceil(2 * zoomedDotR() / scale));
+  // Snap to a sparse, calendar-aligned ladder instead of Math.ceil on every
+  // integer. This means bin merges happen once cleanly at each threshold
+  // rather than flickering between adjacent values as you zoom — a dot pair
+  // stacked vs. side-by-side won't keep swapping with small zoom changes.
+  const raw = 2 * zoomedDotR() / scale;
+  const STEPS = [1, 3, 7, 14, 30, 60, 91, 182, 365];
+  for (const s of STEPS) if (s >= raw) return s;
+  return 365;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -241,11 +244,7 @@ function clampViewport() {
   const maxS = 120;
   scale = Math.max(minS, Math.min(maxS, scale));
   const hw = W / (2 * scale);
-  const panMin = PAN_MIN_DAY + hw;
-  const panMax = PAN_MAX_DAY - hw;
-  panX = panMin <= panMax
-    ? Math.max(panMin, Math.min(panMax, panX))
-    : (PAN_MIN_DAY + PAN_MAX_DAY) / 2;
+  panX = Math.max(-hw * 0.3, Math.min(TOTAL_DAYS + hw * 0.3, panX));
   panY = Math.max(-700, Math.min(700, panY));
 }
 
@@ -361,8 +360,10 @@ function drawBins() {
   // Frame-rate-independent lerp factor. Higher rate = snappier settle.
   // _binDays animates in WORLD-SPACE days; _yOff animates in CSS pixels. Pan
   // is applied at draw time via toSX() so panning never animates.
-  const ANIM_RATE = 18;
-  const lerpT = 1 - Math.exp(-ANIM_RATE * lastFrameDt);
+  // Entry (initial load): fast so the fall-in feels snappy.
+  // Shuffle (zoom rebin): slower so repositioning looks graceful.
+  const lerpTEntry   = 1 - Math.exp(-18 * lastFrameDt);
+  const lerpTShuffle = 1 - Math.exp(-5  * lastFrameDt);
 
   const vL    = toWX(-r0 - 2);
   const vR    = toWX(W + r0 + 2);
@@ -394,11 +395,13 @@ function drawBins() {
       const sign = (i % 2 === 0) ? -1 : 1;
       const targetYOff = sign * (row + 0.5) * stackStep();
 
-      // First-ever positioning: snap with no animation.
+      // First-ever positioning: snap x, start y at axis so dots fall into place.
       if (dot._binDays === null) {
         dot._binDays = targetBinDays;
-        dot._yOff    = targetYOff;
+        dot._yOff    = 0;
+        if (Math.abs(targetYOff) > 0.5) stillAnimating = true;
       } else {
+        const lerpT  = dot._initialEntry ? lerpTEntry : lerpTShuffle;
         const dxDays = targetBinDays - dot._binDays;
         const dyPx   = targetYOff   - dot._yOff;
         // Snap when the remaining delta would render as <0.5px (sub-pixel),
@@ -408,8 +411,9 @@ function drawBins() {
           dot._yOff    += dyPx   * lerpT;
           stillAnimating = true;
         } else {
-          dot._binDays = targetBinDays;
-          dot._yOff    = targetYOff;
+          dot._binDays     = targetBinDays;
+          dot._yOff        = targetYOff;
+          dot._initialEntry = false;
         }
       }
 
@@ -598,6 +602,7 @@ function drawAxisLabels() {
 
 let hovered   = null;
 let fadingDot = null;
+let lockedDot = null;   // desktop: dot whose popup is pinned open by a click
 let dirty     = true;
 
 function findNearest(mx, my) {
@@ -626,14 +631,21 @@ function tick(now) {
     if (Math.abs(d.hoverT - p) > 0.0005) nd = true;
   };
 
-  if (hovered)   anim(hovered, 1);
-  if (fadingDot) { anim(fadingDot, 0); if (fadingDot.hoverT <= 0.001) { fadingDot.hoverT = 0; fadingDot = null; } }
+  if (hovered) anim(hovered, 1);
+  if (lockedDot && lockedDot !== hovered) anim(lockedDot, 1);
+  if (fadingDot && fadingDot !== lockedDot) {
+    anim(fadingDot, 0);
+    if (fadingDot.hoverT <= 0.001) { fadingDot.hoverT = 0; fadingDot = null; }
+  } else if (fadingDot === lockedDot) {
+    fadingDot = null; // lockedDot wins, cancel the fade
+  }
 
   if (nd) {
     // Clear before draw — drawBins can re-arm `dirty` if dots are still
     // animating toward their target column/row, requesting another frame.
     dirty = false;
     draw();
+    if (lockedDot && lockedDot._sx !== null) showPopup(lockedDot);
   }
   requestAnimationFrame(tick);
 }
@@ -652,6 +664,7 @@ const popupSourceLink = document.getElementById('popup-source-link');
 const popupStem = document.getElementById('popup-stem');
 
 let popupTimer = null;
+let didDrag = false;
 
 
 const MOBILE_BREAKPOINT = 760;
@@ -676,6 +689,7 @@ const vpEl = document.getElementById('vp');
 const vpCloseBtn = document.getElementById('vp-close');
 const vpShowBtn = document.getElementById('vp-show');
 const hintEl = document.getElementById('hint');
+let vpInitialized = false;
 
 vpCloseBtn.addEventListener('click', () => {
   vpEl.classList.add('hidden');
@@ -720,14 +734,32 @@ function applyResponsiveChrome() {
   headerSubEl.textContent = copy.headerSub;
   hintEl.textContent = copy.hint;
 
+  const headerBottom = Math.round(headerEl.offsetTop + headerEl.offsetHeight + 10);
+
   if (mobile) {
     vpEl.style.left = '12px';
     vpEl.style.right = '12px';
-    vpEl.style.top = `${Math.round(headerEl.offsetTop + headerEl.offsetHeight + 10)}px`;
+    vpEl.style.top = `${headerBottom}px`;
+    vpShowBtn.style.left = '12px';
+    vpShowBtn.style.right = 'auto';
+    vpShowBtn.style.top = `${headerBottom}px`;
+    vpShowBtn.style.bottom = 'auto';
   } else {
     vpEl.style.left = 'auto';
     vpEl.style.right = '38px';
     vpEl.style.top = '24px';
+    vpShowBtn.style.left = 'auto';
+    vpShowBtn.style.right = '38px';
+    vpShowBtn.style.top = '24px';
+    vpShowBtn.style.bottom = 'auto';
+  }
+
+  if (!vpInitialized) {
+    vpInitialized = true;
+    if (mobile) {
+      vpEl.classList.add('hidden');
+      vpShowBtn.classList.add('visible');
+    }
   }
 }
 
@@ -811,8 +843,20 @@ function showPopup(d) {
 }
 
 function hidePopup() {
+  if (lockedDot) return;
   clearTimeout(popupTimer);
   popup.classList.remove('visible');
+}
+
+function unlockPopup() {
+  if (!lockedDot) return;
+  popup.classList.remove('locked');
+  if (fadingDot && fadingDot !== lockedDot) fadingDot.hoverT = 0;
+  fadingDot = lockedDot;
+  lockedDot = null;
+  clearTimeout(popupTimer);
+  popup.classList.remove('visible');
+  dirty = true;
 }
 
 function updateHover(mx, my) {
@@ -822,13 +866,16 @@ function updateHover(mx, my) {
     if (hovered) { if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0; fadingDot = hovered; }
     hovered = found; dirty = true;
     canvas.style.cursor = found ? 'pointer' : 'grab';
-    if (found) {
+    if (found && !lockedDot) {
       clearTimeout(popupTimer);
       popupTimer = setTimeout(() => { if (hovered) showPopup(hovered); }, 350);
+    } else if (!found && !lockedDot) {
+      hidePopup();
     }
-    else hidePopup();
+  } else if (lockedDot && lockedDot._sx !== null) {
+    showPopup(lockedDot);
   } else if (found && found._sx !== null) {
-    showPopup(found); // reposition as zoom changes
+    showPopup(found);
   }
 }
 
@@ -908,8 +955,11 @@ canvas.addEventListener('touchend', e => {
       const t = e.changedTouches[0];
       const found = findNearest(t.clientX, t.clientY);
       if (found) {
-        setActiveDot(found);
-        showPopup(found);
+        if (found === hovered && popup.classList.contains('visible')) {
+          setActiveDot(null); // tap same dot again → close
+        } else {
+          setActiveDot(found, true);
+        }
       } else {
         setActiveDot(null);
       }
@@ -954,6 +1004,7 @@ canvas.addEventListener('touchcancel', () => {
 canvas.addEventListener('mousemove', e => {
   if (Date.now() < suppressMouseUntil) return;
   if (isDragging) {
+    didDrag = true;
     panX = dragPX - (e.clientX - dragSX) / scale;
     panY = dragPY + (e.clientY - dragSY);
     clampViewport(); dirty = true;
@@ -963,9 +1014,36 @@ canvas.addEventListener('mousemove', e => {
 canvas.addEventListener('mousedown', e => {
   if (Date.now() < suppressMouseUntil) return;
   isDragging = true; dragSX = e.clientX; dragSY = e.clientY; dragPX = panX; dragPY = panY;
+  didDrag = false;
   canvas.classList.add('dragging');
-  if (hovered) { fadingDot = hovered; hovered = null; dirty = true; }
+  if (hovered) {
+    if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0;
+    fadingDot = hovered;
+    hovered = null;
+    dirty = true;
+  }
   hidePopup();
+});
+
+canvas.addEventListener('click', e => {
+  if (Date.now() < suppressMouseUntil) return;
+  if (didDrag) return;
+  const found = findNearest(e.clientX, e.clientY);
+  if (found) {
+    if (found === lockedDot) {
+      unlockPopup();
+    } else {
+      if (lockedDot) unlockPopup();
+      lockedDot = found;
+      hovered = found;
+      if (fadingDot === found) fadingDot = null;
+      popup.classList.add('locked');
+      showPopup(found);
+      dirty = true;
+    }
+  } else {
+    unlockPopup();
+  }
 });
 
 window.addEventListener('mouseup', () => {
@@ -975,7 +1053,12 @@ window.addEventListener('mouseup', () => {
 
 canvas.addEventListener('mouseleave', () => {
   if (Date.now() < suppressMouseUntil) return;
-  if (hovered) { fadingDot = hovered; hovered = null; dirty = true; }
+  if (hovered) {
+    if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0;
+    fadingDot = hovered;
+    hovered = null;
+    dirty = true;
+  }
   canvas.style.cursor = 'grab';
   hidePopup();
 });
@@ -990,7 +1073,10 @@ canvas.addEventListener('wheel', e => {
   panX = wx - (e.clientX - W / 2) / scale;
   clampViewport();
   dirty = true;
-  if (hovered) {
+  if (lockedDot) {
+    if (hovered && hovered !== lockedDot) { hovered.hoverT = 0; hovered = null; }
+    if (fadingDot && fadingDot !== lockedDot) { fadingDot.hoverT = 0; fadingDot = null; }
+  } else if (hovered) {
     hovered.hoverT = 0;
     if (fadingDot && fadingDot !== hovered) fadingDot.hoverT = 0;
     fadingDot = null;
@@ -1039,15 +1125,19 @@ window.addEventListener('pageshow', e => {
 //  INIT
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Start the canvas loop immediately so the grid renders before events arrive.
+resizeCanvas();
+initViewport();
+clampViewport();
+applyResponsiveChrome();
+requestAnimationFrame(tick);
+setTimeout(() => document.getElementById('hint').classList.add('gone'), 5000);
+
+// Populate dots once fonts + data are both ready; they animate in from the axis.
 Promise.all([document.fonts.ready, loadEvents()]).then(([, events]) => {
   realDots = buildDots(events);
   visibleRealDots = realDots.slice();
-  resizeCanvas();
-  initViewport();
-  clampViewport();
   updateSourceCounts();
   updateVisibleDots();
-  applyResponsiveChrome();
-  requestAnimationFrame(tick);
-  setTimeout(() => document.getElementById('hint').classList.add('gone'), 5000);
+  dirty = true;
 });

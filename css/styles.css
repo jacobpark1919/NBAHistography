@@ -124,16 +124,17 @@ body::before {
 #vp.hidden { display: none; }
 #vp-show {
   position: fixed; top: 24px; right: 38px; z-index: 10;
-  font-family: 'DM Mono', monospace; font-size: 22px;
-  color: rgba(255,255,255,0.94);
+  font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700;
+  letter-spacing: 2px; text-transform: uppercase; white-space: nowrap;
+  color: rgba(255,255,255,0.88);
   background: linear-gradient(180deg, rgba(7,10,18,0.92), rgba(7,10,18,0.72));
-  border: 1px solid rgba(255,255,255,0.18); border-radius: 999px;
-  width: 36px; height: 36px; cursor: pointer; pointer-events: auto;
+  border: 1px solid rgba(255,255,255,0.18); border-radius: 8px;
+  padding: 7px 13px; cursor: pointer; pointer-events: auto;
   box-shadow: 0 6px 18px rgba(0,0,0,0.32); transition: background 0.15s, border-color 0.15s;
-  display: none; align-items: center; justify-content: center; padding: 0;
+  display: none; align-items: center; justify-content: center;
 }
 #vp-show.visible { display: flex; }
-#vp-show:hover { background: rgba(20,24,38,1); border-color: rgba(255,255,255,0.42); }
+#vp-show:hover { background: rgba(20,24,38,1); border-color: rgba(255,255,255,0.42); color: #fff; }
 .vp-main {
   font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-weight: 700;
   letter-spacing: 2.4px; color: rgba(255,255,255,0.92); text-transform: uppercase;
@@ -277,6 +278,9 @@ body::before {
   color: rgba(255,159,28,0.92);
   text-decoration: underline;
 }
+/* desktop: popup-inner becomes interactive only when locked (clicked) */
+#popup.locked #popup-inner { pointer-events: auto; cursor: auto; }
+
 /* connector line from bubble to card */
 #popup-stem {
   position: absolute;
@@ -323,6 +327,9 @@ body::before {
   #popup-date { font-size: 12px; letter-spacing: 1.6px; }
   #popup-desc { font-size: 15px; line-height: 1.45; }
   #popup-source { font-size: 11px; letter-spacing: 1px; }
-  #vp-show { top: auto; right: 12px; bottom: 18px; }
+  /* mobile: popup is always interactive when visible (tap → links work) */
+  #popup.visible #popup-inner { pointer-events: auto; }
+  /* mobile vp-show position is set by JS; just clear CSS defaults */
+  #vp-show { bottom: auto; }
 }
 

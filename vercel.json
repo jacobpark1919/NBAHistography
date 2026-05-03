@@ -1,5 +1,25 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": null
+  "framework": null,
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "hoopstography.com" }],
+      "destination": "https://www.hoopstography.com/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "hoopstography.app" }],
+      "destination": "https://www.hoopstography.com/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.hoopstography.app" }],
+      "destination": "https://www.hoopstography.com/:path*",
+      "permanent": true
+    }
+  ]
 }

@@ -268,12 +268,7 @@ function draw() {
   drawAxisLabels();
 }
 
-function drawVignette() {
-  const g = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H) * 0.65);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(3,5,18,0.84)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-}
+function drawVignette() {}
 
 function drawGrid() {
   const yearPx  = scale * 365;
@@ -371,7 +366,7 @@ function drawBins() {
   // Entry (initial load): fast so the fall-in feels snappy.
   // Shuffle (zoom rebin): slower so repositioning looks graceful.
   const lerpTEntry   = 1 - Math.exp(-18 * lastFrameDt);
-  const lerpTShuffle = 1 - Math.exp(-3.5 * lastFrameDt);
+  const lerpTShuffle = 1 - Math.exp(-6 * lastFrameDt);
 
   const vL    = toWX(-r0 - 2);
   const vR    = toWX(W + r0 + 2);
@@ -736,7 +731,7 @@ const DESKTOP_COPY = {
 };
 
 const MOBILE_COPY = {
-  headerSub: 'Pinch to zoom · Drag to pan',
+  headerSub: 'Pinch to zoom · Drag to pan · Tap a bubble to learn more',
   hint: 'Pinch to zoom · Drag to explore · Tap a dot'
 };
 
@@ -769,8 +764,8 @@ function applyResponsiveChrome() {
     vpEl.style.left = '14px';
     vpEl.style.right = '12px';
     vpEl.style.top = `${headerBottom}px`;
-    vpShowBtn.style.left = '14px';
-    vpShowBtn.style.right = 'auto';
+    vpShowBtn.style.left = 'auto';
+    vpShowBtn.style.right = '12px';
     vpShowBtn.style.top = `${headerBottom}px`;
     vpShowBtn.style.bottom = 'auto';
   } else {

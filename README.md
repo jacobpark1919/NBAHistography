@@ -26,7 +26,7 @@ Heavily inspired by [Histography.io](https://histography.io) by Matan Stauber.
 2. Install dependencies and start the dev server:
    ```
    npm install
-   npm run dev
+   npm run dev or npm run dev -- --host 
    ```
 
 ## Interaction

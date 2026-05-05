@@ -1,20 +1,4 @@
-// SUPABASE_URL and SUPABASE_ANON_KEY are injected from .env by Vite (vite.config.js)
-
-async function fetchAll(table, select, headers) {
-  const PAGE = 1000;
-  let rows = [], offset = 0;
-  while (true) {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/${table}?select=${select}&limit=${PAGE}&offset=${offset}`,
-      { headers }
-    );
-    const page = await res.json();
-    rows = rows.concat(page);
-    if (page.length < PAGE) break;
-    offset += PAGE;
-  }
-  return rows;
-}
+// Data is fetched via Supabase Edge Function (bypasses RLS)
 
 // ── Deduplication helpers ─────────────────────────────────────────────────────
 
@@ -73,15 +57,14 @@ function isDuplicate(event, nbaIndex, threshold = 0.1) {
 // ── Main loader ───────────────────────────────────────────────────────────────
 
 async function loadEvents() {
-  const headers = {
-    'apikey': SUPABASE_ANON_KEY,
-    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-  };
+  const res = await fetch(
+    'https:///oyklvvbokossvubkhctj.supabase.co/functions/v1/hoopstography-data'
+  );
 
-  const [nbaData, sportsData] = await Promise.all([
-    fetchAll('nba_events', 'date,description', headers),
-    fetchAll('sports_events', 'event_date,description,title,sport', headers)
-  ]);
+  if (!res.ok) throw new Error(`Edge function error: ${res.status}`);
+
+  const { nbaData, sportsData } = await res.json();
+
   console.log('[supabase] nba_events:', nbaData.length);
   console.log('[supabase] sports_events raw:', sportsData.length);
 

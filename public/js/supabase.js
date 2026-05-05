@@ -58,7 +58,7 @@ function isDuplicate(event, nbaIndex, threshold = 0.1) {
 
 async function loadEvents() {
   const res = await fetch(
-    'https:///oyklvvbokossvubkhctj.supabase.co/functions/v1/hoopstography-data'
+    'https://oyklvvbokossvubkhctj.supabase.co/functions/v1/hoopstography-data'
   );
 
   if (!res.ok) throw new Error(`Edge function error: ${res.status}`);
